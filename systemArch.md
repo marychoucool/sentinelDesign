@@ -68,4 +68,4 @@ F2 -.->|Chat 回應| A
 | **MCP Server** | 將系統能力暴露為 MCP 工具，供 Agent 調用 |
 | **Database (PostgreSQL + pgvector)** | 儲存 Session、Transcript、向量化文字及 Action Items，支援語意搜尋 |
 | **Local Storage** | 存放暫存的音訊檔案，支援離線錄製及上傳同步 |
-| **Workflow Engine** | 工作流編排（Temporal.io），排程 ASR → LLM 多步驟批次作業 |
+| **Workflow Engine (Temporal.io)** | 工作流編排，排程 ASR → LLM 多步驟批次作業，接收 ASR 完成訊號觸發下一階段 |

@@ -44,6 +44,15 @@ L --> G
 M --> N
 N -->|工具調用| G
 
+%% ===== Workflow Engine Flow =====
+I -->|Activity: ASR Batch| E
+I -->|Activity: LLM Batch| F1
+E -->|Workflow Signal<br>(完成 → 觸發 LLM)| I
+
+%% ===== Service to Database =====
+E -->|儲存逐字稿| G
+F1 -->|儲存結果| G
+
 %% ===== External Flow =====
 E -.-> F1
 F1 -.->|產生 Report & Action Items| A

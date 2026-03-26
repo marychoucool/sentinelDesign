@@ -1,0 +1,155 @@
+flowchart TD
+    %% ===== External Systems =====
+    subgraph External ["External Systems"]
+        Frontend["Frontend App<br>(Desktop/iOS/Android)"]
+        ASRService["ASR Service"]
+        ChatService["Chat Service<br>(RAG + Agent)"]
+        WorkflowEngine["Workflow Engine<br>(Temporal.io)"]
+    end
+
+    %% ===== Backend API Container =====
+    subgraph BackendAPI ["Backend API (NestJS)"]
+
+        %% ===== API / Gateway Layer =====
+        subgraph API ["API / Gateway Layer"]
+            AuthController["AuthController"]
+            SessionController["SessionController"]
+            ScheduleController["ScheduleController"]
+            ReportController["ReportController"]
+            ActionItemController["ActionItemController"]
+            ChatController["ChatController"]
+            AdminController["AdminController"]
+            SettingsController["SettingsController"]
+            WebSocketGateway["WebSocketGateway<br>(Audio + Chat Streaming)"]
+        end
+
+        %% ===== Service Layer =====
+        subgraph Services ["Service Layer"]
+            AuthService["AuthService"]
+            SessionService["SessionService"]
+            ScheduleService["ScheduleService"]
+            ReportService["ReportService"]
+            ActionItemService["ActionItemService"]
+            ChatProxyService["ChatProxyService"]
+            StorageService["StorageService"]
+            MonitorService["MonitorService"]
+            NotificationService["NotificationService"]
+            SettingsService["SettingsService"]
+        end
+
+        %% ===== Repository Layer =====
+        subgraph Repositories ["Repository Layer"]
+            UserRepository["UserRepository"]
+            SessionRepository["SessionRepository"]
+            TranscriptRepository["TranscriptRepository"]
+            ActionItemRepository["ActionItemRepository"]
+            EmbeddingRepository["EmbeddingRepository"]
+        end
+
+        %% ===== Infrastructure Layer =====
+        subgraph Infrastructure ["Infrastructure"]
+            DBConnection["Database Connection Pool"]
+            gRPCClient["gRPC Client<br>(ASR Service)"]
+            TemporalClient["Temporal Client<br>(Workflow Engine)"]
+            ChatClient["WebSocket Client<br>(Chat Service)"]
+            LocalStorage["Local File Storage<br>(Audio Files)"]
+        end
+
+        %% ===== Cross-cutting Concerns =====
+        subgraph CrossCutting ["Cross-cutting"]
+            AuthMiddleware["Auth Middleware"]
+            ValidationPipe["Validation Pipe"]
+            ExceptionFilter["Exception Filter"]
+            Logger["Logger"]
+        end
+    end
+
+    %% ===== Database =====
+    subgraph DataStore ["Data Store"]
+        Database[("Database<br>(PostgreSQL + pgvector)")]
+    end
+
+    %% ===== External Connections =====
+    Frontend -->|REST / WebSocket| BackendAPI
+    BackendAPI -->|gRPC Streaming| ASRService
+    BackendAPI -->|WebSocket| ChatService
+    BackendAPI -->|Start Workflow| WorkflowEngine
+
+    %% ===== Data Flow: ASR → Chat =====
+    ASRService -.->|"Transcripts"| ChatService
+    TranscriptRepository -.->|"Embeddings Used by Chat"| ChatService
+
+    %% ===== Internal Flow: API to Services =====
+    AuthController --> AuthService
+    SessionController --> SessionService
+    ScheduleController --> ScheduleService
+    ReportController --> ReportService
+    ActionItemController --> ActionItemService
+    ChatController --> ChatProxyService
+    AdminController --> MonitorService
+    SettingsController --> SettingsService
+    WebSocketGateway -->|"Audio Streaming"| SessionService
+    WebSocketGateway -->|"Chat Streaming"| ChatProxyService
+
+    %% ===== Services to Repositories =====
+    AuthService --> UserRepository
+    SessionService --> SessionRepository
+    SessionService --> TranscriptRepository
+    ScheduleService --> SessionRepository
+    ReportService --> SessionRepository
+    ReportService --> TranscriptRepository
+    ActionItemService --> ActionItemRepository
+    ChatProxyService --> EmbeddingRepository
+    SettingsService --> UserRepository
+    MonitorService -.->|"Read Metrics"| Logger
+
+    %% ===== Repositories to Database =====
+    UserRepository --> DBConnection
+    SessionRepository --> DBConnection
+    TranscriptRepository --> DBConnection
+    ActionItemRepository --> DBConnection
+    EmbeddingRepository --> DBConnection
+    DBConnection --> Database
+
+    %% ===== Services to Infrastructure =====
+    SessionService --> StorageService
+    StorageService --> LocalStorage
+    SessionService -->|"Trigger ASR Workflow"| TemporalClient
+    TemporalClient --> WorkflowEngine
+    SessionService -->|"Real-time ASR"| gRPCClient
+    gRPCClient --> ASRService
+    ChatProxyService -->|"Chat Queries"| ChatClient
+    ChatClient --> ChatService
+    NotificationService -.->|"Send Notification"| Frontend
+
+    %% ===== Cross-cutting =====
+    AuthMiddleware -.->|"Protect Routes"| API
+    ValidationPipe -.->|"Validate Requests"| API
+    ExceptionFilter -.->|"Handle Errors"| API
+    Logger -.->|"Log Events"| Services
+
+    %% ===== Layer Background Colors =====
+    style API fill:#e3f2fd,fill-opacity:0.3,stroke:#90caf9,stroke-width:1px
+    style Services fill:#fff8e1,fill-opacity:0.3,stroke:#ffe082,stroke-width:1px
+    style Repositories fill:#f3e5f5,fill-opacity:0.3,stroke:#ce93d8,stroke-width:1px
+    style Infrastructure fill:#e8f5e9,fill-opacity:0.3,stroke:#a5d6a7,stroke-width:1px
+    style CrossCutting fill:#fce4ec,fill-opacity:0.3,stroke:#f48fb1,stroke-width:1px
+    style External fill:#eceff1,fill-opacity:0.3,stroke:#b0bec5,stroke-width:1px
+    style DataStore fill:#bbdefb,fill-opacity:0.5,stroke:#64b5f6,stroke-width:2px
+
+    %% ===== Styling =====
+    classDef controller fill:#0277bd,stroke:#01579b,stroke-width:2px,color:#fff
+    classDef service fill:#f9a825,stroke:#f57f17,stroke-width:2px,color:#000
+    classDef repository fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff
+    classDef infra fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+    classDef cross fill:#c2185b,stroke:#880e4f,stroke-width:2px,color:#fff
+    classDef external fill:#546e7a,stroke:#37474f,stroke-width:2px,color:#fff
+    classDef database fill:#0277bd,stroke:#01579b,stroke-width:3px,color:#fff
+
+    class AuthController,SessionController,ScheduleController,ReportController,ActionItemController,ChatController,AdminController,SettingsController,WebSocketGateway controller
+    class AuthService,SessionService,ScheduleService,ReportService,ActionItemService,ChatProxyService,StorageService,MonitorService,NotificationService,SettingsService service
+    class UserRepository,SessionRepository,TranscriptRepository,ActionItemRepository,EmbeddingRepository repository
+    class DBConnection,gRPCClient,TemporalClient,ChatClient,LocalStorage infra
+    class AuthMiddleware,ValidationPipe,ExceptionFilter,Logger cross
+    class Frontend,ASRService,ChatService,WorkflowEngine external
+    class Database database

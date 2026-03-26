@@ -1,0 +1,318 @@
+erDiagram
+    %% ========================================================================
+    %% Sentinel System Entity-Relationship Diagram
+    %% On-Premise Meeting Intelligence Platform
+    %% ========================================================================
+
+    %% ========================================================================
+    %% User Domain (Blue)
+    %% ========================================================================
+    users {
+        uuid id PK
+        varchar username UK
+        varchar email UK
+        varchar password_hash
+        varchar full_name
+        user_role role
+        user_plan plan
+        boolean is_active
+        timestamp last_login_at
+        inet last_login_ip
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ========================================================================
+    %% Session Domain (Green)
+    %% ========================================================================
+    sessions {
+        uuid id PK
+        uuid user_id FK
+        varchar title
+        text description
+        session_status status
+        varchar audio_file_path
+        integer audio_duration_ms
+        varchar audio_format
+        boolean is_scheduled
+        timestamp scheduled_start_at
+        timestamp scheduled_end_at
+        timestamp actual_start_at
+        timestamp actual_end_at
+        timestamp asr_started_at
+        timestamp asr_completed_at
+        timestamp llm_started_at
+        timestamp llm_completed_at
+        integer transcript_word_count
+        integer participant_count
+        boolean is_deleted
+        timestamp deleted_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    session_participants {
+        uuid id PK
+        uuid session_id FK
+        uuid user_id FK
+        varchar speaker_label
+        varchar participant_name
+        varchar participant_email
+        timestamp joined_at
+        timestamp left_at
+        timestamp created_at
+    }
+
+    transcripts {
+        uuid id PK
+        uuid session_id FK
+        text text
+        integer start_ms
+        integer end_ms
+        varchar speaker_label
+        uuid participant_id FK
+        decimal confidence
+        varchar language
+        tsvector text_tsv
+        timestamp created_at
+    }
+
+    reports {
+        uuid id PK
+        uuid session_id FK
+        text summary
+        jsonb key_points
+        jsonb topics
+        varchar model_name
+        varchar model_version
+        integer prompt_tokens
+        integer completion_tokens
+        integer total_tokens
+        varchar export_format
+        varchar export_path
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    action_items {
+        uuid id PK
+        uuid session_id FK
+        uuid report_id FK
+        varchar title
+        text description
+        action_priority priority
+        action_status status
+        uuid assigned_to FK
+        uuid created_by FK
+        timestamp due_date
+        timestamp completed_at
+        boolean overdue_notified
+        decimal extraction_confidence
+        text extraction_context
+        jsonb tags
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ========================================================================
+    %% Chat Domain (Orange)
+    %% ========================================================================
+    chat_conversations {
+        uuid id PK
+        uuid user_id FK
+        varchar title
+        chat_mode mode
+        integer message_count
+        timestamp last_message_at
+        uuid context_session_id FK
+        jsonb context_action_item_ids
+        boolean is_archived
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    chat_messages {
+        uuid id PK
+        uuid conversation_id FK
+        message_role role
+        text content
+        boolean is_streaming
+        timestamp stream_started_at
+        timestamp stream_completed_at
+        varchar model_name
+        integer prompt_tokens
+        integer completion_tokens
+        jsonb tool_calls
+        jsonb referenced_sessions
+        jsonb referenced_transcripts
+        decimal similarity_threshold
+        integer feedback_score
+        text feedback_text
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ========================================================================
+    %% Vector Search Domain (Purple)
+    %% ========================================================================
+    embeddings {
+        uuid id PK
+        uuid session_id FK
+        varchar content_type
+        uuid source_id
+        integer chunk_index
+        integer chunk_count
+        uuid parent_embedding_id FK
+        text content
+        vector(1536) embedding
+        jsonb metadata
+        timestamp created_at
+    }
+
+    %% ========================================================================
+    %% Workflow Domain (Red)
+    %% ========================================================================
+    workflow_jobs {
+        uuid id PK
+        job_type job_type
+        job_status status
+        uuid session_id FK
+        uuid related_job_id FK
+        integer progress_percent
+        varchar current_step
+        integer total_steps
+        integer retry_count
+        integer max_retries
+        timestamp last_retry_at
+        varchar worker_id
+        varchar queue_name
+        varchar workflow_id
+        jsonb input_data
+        jsonb output_data
+        text result_summary
+        text error_message
+        text error_stack
+        timestamp failed_at
+        timestamp started_at
+        timestamp completed_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% ========================================================================
+    %% Notification Domain (Yellow)
+    %% ========================================================================
+    notifications {
+        uuid id PK
+        uuid user_id FK
+        notification_type type
+        varchar title
+        text message
+        uuid related_session_id FK
+        uuid related_action_item_id FK
+        uuid related_job_id FK
+        notification_status status
+        integer delivery_attempts
+        timestamp sent_at
+        timestamp delivered_at
+        timestamp read_at
+        timestamp expires_at
+        varchar action_url
+        timestamp created_at
+    }
+
+    %% ========================================================================
+    %% Audit Domain (Gray)
+    %% ========================================================================
+    audit_logs {
+        uuid id PK
+        uuid user_id FK
+        user_role user_role
+        inet action_ip
+        varchar action_type
+        varchar table_name
+        uuid record_id
+        text action_description
+        jsonb before_value
+        jsonb after_value
+        varchar request_id
+        text user_agent
+        timestamp created_at
+    }
+
+    %% ========================================================================
+    %% Relationships
+    %% ========================================================================
+
+    %% User to Sessions (One-to-Many)
+    users ||--o{ sessions : "creates"
+    users ||--o{ session_participants : "joins"
+    users ||--o{ action_items : "assigned_to"
+    users ||--o{ action_items : "creates"
+    users ||--o{ chat_conversations : "has"
+    users ||--o{ notifications : "receives"
+    users ||--o{ audit_logs : "performs"
+
+    %% Sessions to Participants (One-to-Many)
+    sessions ||--o{ session_participants : "has"
+
+    %% Sessions to Transcripts (One-to-Many)
+    sessions ||--o{ transcripts : "contains"
+
+    %% Sessions to Reports (One-to-One)
+    sessions ||--|| reports : "has"
+
+    %% Sessions to Action Items (One-to-Many)
+    sessions ||--o{ action_items : "generates"
+
+    %% Sessions to Embeddings (One-to-Many)
+    sessions ||--o{ embeddings : "indexed_in"
+
+    %% Session Participants to Transcripts (Many-to-One)
+    session_participants ||--o{ transcripts : "speaks_in"
+
+    %% Reports to Action Items (One-to-Many)
+    reports ||--o{ action_items : "extracts"
+
+    %% Chat Conversations to Messages (One-to-Many)
+    chat_conversations ||--o{ chat_messages : "contains"
+
+    %% Chat Conversations to Sessions (Many-to-One - optional context)
+    sessions ||--o{ chat_conversations : "context_of"
+
+    %% Embeddings Self-Referencing (Chunks)
+    embeddings ||--o{ embeddings : "parent_of"
+
+    %% Workflow Jobs Self-Referencing (Dependencies)
+    workflow_jobs ||--o{ workflow_jobs : "depends_on"
+
+    %% Sessions to Workflow Jobs (One-to-Many)
+    sessions ||--o{ workflow_jobs : "triggers"
+
+    %% Action Items to Notifications (One-to-Many)
+    action_items ||--o{ notifications : "notifies"
+
+    %% Sessions to Notifications (One-to-Many)
+    sessions ||--o{ notifications : "alerts"
+
+    %% Workflow Jobs to Notifications (One-to-Many)
+    workflow_jobs ||--o{ notifications : "reports"
+
+    %% ========================================================================
+    %% Styling
+    %% ========================================================================
+    classDef userDomain fill:#0277bd,stroke:#01579b,stroke-width:2px,color:#fff
+    classDef sessionDomain fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+    classDef chatDomain fill:#f9a825,stroke:#f57f17,stroke-width:2px,color:#000
+    classDef vectorDomain fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff
+    classDef workflowDomain fill:#c62828,stroke:#b71c1c,stroke-width:2px,color:#fff
+    classDef notificationDomain fill:#fbc02d,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef auditDomain fill:#616161,stroke:#424242,stroke-width:2px,color:#fff
+
+    class users userDomain
+    class sessions,session_participants,transcripts,reports,action_items sessionDomain
+    class chat_conversations,chat_messages chatDomain
+    class embeddings vectorDomain
+    class workflow_jobs workflowDomain
+    class notifications notificationDomain
+    class audit_logs auditDomain

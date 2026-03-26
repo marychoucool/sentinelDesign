@@ -48,7 +48,7 @@ Server 端會執行兩個模型：
 
 ## Session Recording
 - 作為使用者，我希望可以建立會議即時 Session，錄製會議內容（streaming upload）。
-- 作為使用者，我希望可以預約會議 Session。
+- 作為使用者，我希望可以預約會議 Session，時間到的時候前端提醒使用者，並可以在calendar page查看。
 - 作為使用者，我希望在離線時錄製 Session，連線後自動上傳至 server。
 - As a user, I want to be notified when a session is processed successfully, so that I can check report ASAP.
 
@@ -68,6 +68,9 @@ Server 端會執行兩個模型：
 ## Dashboard
 - 作為管理者，我希望可以監控伺服器資源（CPU、記憶體、儲存空間）。
 - 作為管理者，我希望可以查看目前活躍會議 Session 及任務數量。
+- 
+## calendar
+- 作為管理者，我希望可以在calendar page，當中看到我所預約的session。
 
 ## Settings
 - 作為使用者，我希望可以更改個人資訊。
@@ -142,6 +145,17 @@ Server 端會執行兩個模型：
 ### 主要流程
 1. 查看伺服器硬體狀態（CPU/Memory/Storage）及系統活躍指標（Active Sessions）。
 2. **權限限制**：Admin 無法查看特定會議逐字稿或摘要內容。
+
+---
+
+## 6. 查看與管理預約會議 (Calendar)
+**Actor**: Normal User / Admin User
+**Precondition**: User logged in
+
+### 主要流程
+1. 使用者進入 Calendar 介面。
+2. 系統呈現已預約的 Session（標題、時間、參與者）。
+3. 使用者可以點擊特定 Session 查看詳情或進行修改/取消。
 
 ---
 

@@ -1,0 +1,95 @@
+flowchart TD
+    %% ===== External Actor =====
+    subgraph External ["External Systems"]
+        BackendAPI["Backend API"]
+        Database[("Database<br>(PostgreSQL + pgvector)")]
+        LLMProvider["LLM Provider<br>(OpenAI / Anthropic / Local)"]
+    end
+
+    %% ===== Chat Service Container =====
+    subgraph ChatService ["Chat Service"]
+
+        %% ===== Gateway Layer =====
+        subgraph Gateway ["Gateway Layer"]
+            ChatWSGateway["Chat WebSocket Gateway"]
+            RequestValidator["Request Validator"]
+        end
+
+        %% ===== Router Layer =====
+        subgraph Router ["Router Layer"]
+            PlanBasedRouter["Plan-based Router"]
+            IntentClassifier["Intent Classifier"]
+        end
+
+        %% ===== RAG Engine =====
+        subgraph RAGEngine ["RAG Engine<br>(Basic Plan)"]
+            QueryPreprocessor["Query Preprocessor"]
+            VectorSearchService["Vector Search Service<br>(pgvector)"]
+            ContextBuilder["Context Builder"]
+            RAGLLMClient["RAG LLM Client<br>(Streaming)"]
+            RAGResponseFormatter["Response Formatter"]
+        end
+
+        %% ===== Agent Engine =====
+        subgraph AgentEngine ["Agent Engine<br>(Mid Plan)"]
+            AgentCore["Agent Core<br>(Reasoning + Memory)"]
+            ToolExecutor["Tool Executor"]
+            AgentLLMClient["Agent LLM Client"]
+        end
+
+        %% ===== MCP Server =====
+        subgraph MCPServer ["MCP Server"]
+            SystemTools["System Tools<br>(CRUD Operations)"]
+        end
+
+    end
+
+    %% ===== External Connections =====
+    BackendAPI -->|WebSocket Streaming| ChatService
+    ChatService -->|SQL Queries| Database
+    ChatService -->|LLM API Calls| LLMProvider
+
+    %% ===== Internal Flow: Gateway =====
+    ChatWSGateway --> RequestValidator
+    RequestValidator --> PlanBasedRouter
+
+    %% ===== Router Flow =====
+    PlanBasedRouter --> IntentClassifier
+    IntentClassifier -->|"Basic Plan"| RAGEngine
+    IntentClassifier -->|"Mid Plan"| AgentEngine
+
+    %% ===== RAG Engine Flow =====
+    QueryPreprocessor --> VectorSearchService
+    VectorSearchService -->|"Vector Search"| Database
+    VectorSearchService -->|"Retrieved Chunks"| ContextBuilder
+    ContextBuilder --> RAGLLMClient
+    RAGLLMClient -->|Streaming Response| RAGResponseFormatter
+    RAGResponseFormatter -->|"Streaming Response"| ChatWSGateway
+    RAGLLMClient -->|LLM Request| LLMProvider
+
+    %% ===== Agent Engine Flow =====
+    AgentCore --> AgentLLMClient
+    AgentLLMClient -->|"Tool Calls Needed"| ToolExecutor
+    ToolExecutor -->|"Execute Tools"| SystemTools
+    SystemTools -->|"Operation Result"| ToolExecutor
+    ToolExecutor --> AgentCore
+    AgentCore --> AgentLLMClient
+    AgentCore -->|"Streaming Response"| ChatWSGateway
+    AgentLLMClient -->|LLM Request| LLMProvider
+
+    %% ===== Styling =====
+    classDef gateway fill:#0277bd,stroke:#01579b,stroke-width:2px,color:#fff
+    classDef router fill:#f9a825,stroke:#f57f17,stroke-width:2px,color:#000
+    classDef rag fill:#2e7d32,stroke:#1b5e20,stroke-width:2px,color:#fff
+    classDef agent fill:#d84315,stroke:#bf360c,stroke-width:2px,color:#fff
+    classDef mcp fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#fff
+    classDef external fill:#546e7a,stroke:#37474f,stroke-width:2px,color:#fff
+    classDef database fill:#0277bd,stroke:#01579b,stroke-width:3px,color:#fff
+
+    class ChatWSGateway,RequestValidator gateway
+    class PlanBasedRouter,IntentClassifier router
+    class QueryPreprocessor,VectorSearchService,ContextBuilder,RAGLLMClient,RAGResponseFormatter rag
+    class AgentCore,ToolExecutor,AgentLLMClient agent
+    class SystemTools mcp
+    class BackendAPI,LLMProvider external
+    class Database database
