@@ -15,14 +15,13 @@ F1["LLM Batch Service<br>(Summary / Action Items / Embedding)"]
 F2["Chat Module"]
 G["Database<br>(PostgreSQL + pgvector)"]
 H["Local Storage<br>(Audio Files)"]
-I["Job Queue"]
-J["Monitoring Service<br>(Metrics)"]
+I["Workflow Engine<br>(Temporal.io)"]
 
 %% Chat Module 內部
 K["Chat Router<br>(RAG / Agent Selector)"]
 L["RAG Engine<br>(Vector Search + LLM)"]
 M["Agent Engine<br>(Tool Calling + Reasoning)"]
-N["MCP Server<br>(System Tools)"]
+N["MCP Server<br>(System Tools)"] 
 
 %% ===== User Interactions =====
 A -->|錄音 / 上傳 / Chat| D
@@ -36,12 +35,11 @@ D --> F2
 D --> G
 D --> H
 D --> I
-D --> J
 
 %% ===== Chat Module 內部 Flow =====
 F2 --> K
-K -->|簡單查詢| L
-K -->|複雜任務| M
+K -->|Basic Plan RAG| L
+K -->|Mid Plan Agent| M
 L --> G
 M --> N
 N -->|工具調用| G
@@ -50,4 +48,3 @@ N -->|工具調用| G
 E -.-> F1
 F1 -.->|產生 Report & Action Items| A
 F2 -.->|Chat 回應| A
-J -.->|系統狀態| B

@@ -24,27 +24,24 @@
 
 | 容器 | 技術 | 職責 |
 |------|------|------|
-| **Mobile App** | iOS / Android | 錄音、上傳、Chat 查詢 |
-| **Laptop App** | Web / Desktop | 錄音、上傳、Chat 查詢 |
-| **Admin Dashboard** | Web | 監控系統、查看統計 |
+| **Frontend App** | Desktop / iOS / Android | 錄音、上傳、Chat 查詢 |
+
 
 ### 後端容器 (Sentinel Server)
 
 | 容器 | 技術 | 職責 |
 |------|------|------|
-| **Backend API** | NestJS / REST API | 中央 API 閘道，處理所有請求 |
-| **ASR Service** | - | 語音轉文字 |
+| **Backend API** | NestJS + Local Storage | REST API、WebSocket、音檔儲存、系統監控 |
+| **ASR Service** | gRPC Streaming + Job Worker | 語音轉文字（實時 + 批次） |
 | **LLM Batch Service** | - | 批次處理：摘要、Action Items、嵌入 |
 | **Chat Module** | - | Chat 查詢處理 (RAG / Agent) |
-| **Monitoring Service** | - | 系統監控與指標收集 |
 
 ### 資料儲存 (Data Stores)
 
 | 容器 | 技術 | 職責 |
 |------|------|------|
 | **Database** | PostgreSQL + pgvector | 儲存會議資料、逐字稿、向量 |
-| **Local Storage** | File System | 暫存音訊檔案 |
-| **Job Queue** | Redis / Bull | 非同步任務排程 |
+| **Workflow Engine** | Temporal.io / BullMQ | 工作流編排與非同步任務排程 |
 
 ---
 
@@ -54,53 +51,62 @@
 
 | 連結 | 協定 | 用途 |
 |------|------|------|
-| Frontend → Backend API | HTTPS / REST API | 使用者請求 |
-| Backend API → ASR Service | gRPC / HTTP | ASR 請求 |
-| Backend API → Job Queue | Job Event | 放入非同步任務 |
-| Job Queue → LLM Batch Service | Job Event | 消費任務 |
+| Frontend → Backend API | **WebSocket** | 實時音訊串流 + Chat Streaming |
+| Frontend → Backend API | **HTTPS / REST API** | 其他請求（錄音/上傳/查詢） |
+| Backend API → Frontend App | **WebSocket** | 推送監控數據（Admin Dashboard） |
+| Backend API → Chat Module | **WebSocket Streaming** | Chat 查詢串流 |
+| Backend API → ASR Service | **gRPC Streaming** | 實時 ASR（錄音中） |
+| ASR Service → Backend API | gRPC Streaming | 推送逐字稿片段 |
+| Backend API → Workflow Engine | Start Workflow | 啟動 ASR → LLM 工作流 |
+| Workflow Engine → ASR Service | Activity | ASR 批次處理 |
+| Workflow Engine → LLM Batch Service | Activity | LLM 批次處理 |
+| ASR Service → Workflow Engine | Workflow Signal | ASR 完成，觸發 LLM |
+| ASR Service → Backend API | HTTP | 讀取音檔 |
 | Service → Database | SQL (TCP/Connection Pool) | 資料存取 |
-| Service → Local Storage | File I/O | 音檔讀寫 |
-| Monitoring → Dashboard | WebSocket | 實時推送 |
 
 ---
 
 ## 主要資料流
 
 ### 1. 音訊處理流程
+
+#### 階段 1: 錄音中（實時串流）
 ```
-Mobile App → Backend API → Local Storage (儲存音檔)
-                            ↓
-                         Job Queue
-                            ↓
-                        ASR Service
-                            ↓
-                    Database (儲存逐字稿)
-                            ↓
-                         Job Queue
-                            ↓
-                    LLM Batch Service
-                            ↓
-                    Database (儲存摘要、Action Items、嵌入)
+Frontend App ──WebSocket──→ Backend API ──gRPC Streaming──→ ASR Service
+       ↑                                                                   │
+       └───────────── WebSocket 推送逐字稿片段 ─────────────────────────────┘
 ```
 
-### 2. Chat 查詢流程
+#### 階段 2: 錄音完成（批次處理）
 ```
-Mobile App → Backend API → Chat Module → Database (向量搜尋)
-                                         ↓
-                                     LLM 回應
-                                         ↓
-                                    Backend API
-                                         ↓
-                                    Mobile App
+Backend API ──Workflow Engine──→ ASR Service (讀取音檔、完整處理)
+                                   ↓
+                           Database (儲存逐字稿)
+                                   ↓
+                             Workflow Signal (ASR 完成)
+                                   ↓
+                             LLM Batch Service
+                                   ↓
+                           Database (儲存摘要、Action Items、嵌入)
+```
+
+### 2. Chat 查詢流程 (Streaming)
+```
+Mobile App ←WebSocket→ Backend API ←WebSocket→ Chat Module → Database (向量搜尋)
+                                            ↓
+                                        LLM Streaming Tokens
+                                            ↓
+                                         Backend API
+                                            ↓
+                                         Mobile App
 ```
 
 ### 3. 監控流程
 ```
-Admin Dashboard → Backend API → Monitoring Service
-                                          ↓
-                                    (WebSocket 推送)
-                                          ↓
-                                  Admin Dashboard
+Frontend App ←─────────────────────────→ Backend API
+     ↑                                         ↓
+     └──────── WebSocket 推送系統狀態 ──────────┘
+                                  (CPU / Memory / Storage / Active Sessions)
 ```
 
 ---
@@ -130,9 +136,10 @@ Level 4: Deployment Diagram
 | 決策 | 原因 |
 |------|------|
 | **Backend API 作為中央閘道** | 統一請求入口、易於管理認證授權 |
-| **Job Queue 處理非同步任務** | ASR/LLM 耗時較長，避免阻塞使用者請求 |
+| **監控功能集成於 Backend API** | 功能簡單、數據源在內部、降低部署複雜度 |
+| **ASR Service 支援 Streaming + Batch** | 單一容器同時支援實時反饋與完整處理 |
+| **Workflow Engine 處理多步驟任務** | ASR → LLM 工作流編排，避免阻塞使用者請求 |
 | **PostgreSQL + pgvector** | 支援關聯式資料與語意搜尋 |
-| **WebSocket 推送監控數據** | 實時更新，無需輪詢 |
 
 ---
 

@@ -1,13 +1,13 @@
 flowchart LR
     %% ===== Users =====
-    A["Normal User<br>(Mobile / Laptop)"]
-    B["Admin User<br>(Dashboard)"]
-    C["Root User<br>(Debug / Dev)"]
+    NormalUser["Normal User<br>(Mobile / Laptop)"]
+    AdminUser["Admin User<br>(Dashboard)"]
+    RootUser["Root User<br>(Debug / Dev)"]
 
     %% ===== System =====
-    D["Sentinel Server<br>(On-Premise)"]
+    SentinelServer["Sentinel Server<br>(On-Premise)"]
 
     %% ===== User Interactions =====
-    A -->|錄音 / 上傳 / Chat 查詢| D
-    B -->|監控系統、查看統計| D
-    C -->|Debug / 全權限存取| D
+    NormalUser -->|錄音 / 上傳 / Chat 查詢| SentinelServer
+    AdminUser -->|監控系統、查看統計| SentinelServer
+    RootUser -->|Debug / 全權限存取| SentinelServer

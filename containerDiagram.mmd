@@ -1,63 +1,57 @@
 flowchart TD
     %% ===== Users =====
-    A["Normal User"]
-    B["Admin User"]
-    C["Root User"]
+    NormalUser["Normal User"]
+    AdminUser["Admin User"]
+    RootUser["Root User"]
 
     %% ===== Frontend Containers =====
     subgraph Frontend ["Client Applications"]
-        FA["Mobile App<br>(iOS / Android)"]
-        FB["Laptop App<br>(Web/Desktop)"]
-        FC["Admin Dashboard<br>(Web)"]
+        FrontendApp["Frontend App<br>(Desktop/iOS/Android)"]
     end
 
     %% ===== System Boundary =====
     subgraph Backend ["Sentinel Server<br>(On-Premise)"]
         %% ===== Backend API =====
-        API["Backend API<br>(NestJS / REST API)"]
+        BackendAPI["Backend API<br>(NestJS + Local Storage + Monitoring)"]
 
         %% ===== Services =====
-        ASR["ASR Service<br>: Speech to Text"]
-        LLM["LLM Batch Service<br>: Summary / Action / Embedding"]
-        CHAT["Chat Module<br>: Chat Query Processing"]
-        MON["Monitoring Service<br>: System Metrics"]
+        ASRService["ASR Service<br>: Streaming + Batch Speech to Text"]
+        LLMService["LLM Batch Service<br>: Summary / Action / Embedding"]
+        ChatService["Chat Service<br>: Chat Query Processing"]
 
         %% ===== Data Stores =====
-        DB["Database<br>(PostgreSQL + pgvector)"]
-        STORAGE["Local Storage<br>(Audio Files)"]
-        QUEUE["Job Queue<br>(Redis/Bull)"]
+        Database["Database<br>(PostgreSQL + pgvector)"]
+        WorkflowEngine["Workflow Engine<br>(Temporal.io / BullMQ)"]
     end
 
     %% ===== User to Frontend =====
-    A --> FA
-    A --> FB
-    B --> FC
-    C --> FA
+    NormalUser --> FrontendApp
+    AdminUser --> FrontendApp
+    RootUser --> FrontendApp
 
-    %% ===== Frontend to Backend (HTTPS/REST API) =====
-    FA -->|"HTTPS / REST API<br>(錄音/上傳/Chat)"| API
-    FB -->|"HTTPS / REST API<br>(錄音/上傳/Chat)"| API
-    FC -->|"HTTPS / REST API<br>(監控/統計)"| API
+    %% ===== Frontend to Backend =====
+    FrontendApp -->|"WebSocket<br>(實時音訊串流 + Chat Streaming)"| BackendAPI
+    FrontendApp -->|"HTTPS / REST API<br>(錄音/上傳/其他查詢)"| BackendAPI
+    BackendAPI -->|"WebSocket<br>(推送監控數據)"| FrontendApp
 
-    %% ===== Backend Internal (API Calls / Events) =====
-    API -->|"gRPC / HTTP<br>(ASR 請求)"| ASR
-    API -->|"Job Event<br>(放入佇列)"| QUEUE
-    API -->|"HTTP<br>(Chat 查詢)"| CHAT
-    API -->|"HTTP<br>(指標查詢)"| MON
+    %% ===== Backend Internal (Real-time Streaming) =====
+    BackendAPI -->|"gRPC Streaming<br>(錄音中)"| ASRService
+    ASRService -->|"推送逐字稿"| BackendAPI
 
-    %% ===== Job Queue Processing (Event-driven) =====
-    QUEUE -->|"Job Event<br>(消費任務)"| LLM
-    ASR -->|"Job Event<br>(觸發 LLM)"| QUEUE
+    %% ===== Backend Internal (Batch Processing) =====
+    BackendAPI -->|"Start Workflow<br>(ASR → LLM)"| WorkflowEngine
+    BackendAPI -->|"WebSocket Streaming<br>(Chat 查詢)"| ChatService
+
+    %% ===== Workflow Processing =====
+    WorkflowEngine -->|"Activity<br>: ASR Batch"| ASRService
+    WorkflowEngine -->|"Activity<br>: LLM Batch"| LLMService
+    ASRService -->|"Workflow Signal<br>(完成 → 觸發 LLM)"| WorkflowEngine
 
     %% ===== Service to Database (TCP/Connection Pool) =====
-    ASR -->|"SQL<br>(儲存逐字稿)"| DB
-    LLM -->|"SQL<br>(儲存結果)"| DB
-    CHAT -->|"SQL<br>(查詢/寫入)"| DB
-    API -->|"SQL<br>(資料查詢)"| DB
+    ASRService -->|"SQL<br>(儲存逐字稿)"| Database
+    LLMService -->|"SQL<br>(儲存結果)"| Database
+    ChatService -->|"SQL<br>(查詢/寫入)"| Database
+    BackendAPI -->|"SQL<br>(資料查詢)"| Database
 
-    %% ===== Storage Access (File I/O) =====
-    ASR -->|"File Read<br>(讀取音檔)"| STORAGE
-    API -->|"File Write<br>(儲存音檔)"| STORAGE
-
-    %% ===== Monitoring (WebSocket/Push) =====
-    MON -->|"WebSocket<br>(推送系統狀態)"| FC
+    %% ===== Storage Access =====
+    ASRService -->|"HTTP<br>(讀取音檔)"| BackendAPI
