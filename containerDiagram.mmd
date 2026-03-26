@@ -1,0 +1,63 @@
+flowchart TD
+    %% ===== Users =====
+    A["Normal User"]
+    B["Admin User"]
+    C["Root User"]
+
+    %% ===== Frontend Containers =====
+    subgraph Frontend ["Client Applications"]
+        FA["Mobile App<br>(iOS / Android)"]
+        FB["Laptop App<br>(Web/Desktop)"]
+        FC["Admin Dashboard<br>(Web)"]
+    end
+
+    %% ===== System Boundary =====
+    subgraph Backend ["Sentinel Server<br>(On-Premise)"]
+        %% ===== Backend API =====
+        API["Backend API<br>(NestJS / REST API)"]
+
+        %% ===== Services =====
+        ASR["ASR Service<br>: Speech to Text"]
+        LLM["LLM Batch Service<br>: Summary / Action / Embedding"]
+        CHAT["Chat Module<br>: Chat Query Processing"]
+        MON["Monitoring Service<br>: System Metrics"]
+
+        %% ===== Data Stores =====
+        DB["Database<br>(PostgreSQL + pgvector)"]
+        STORAGE["Local Storage<br>(Audio Files)"]
+        QUEUE["Job Queue<br>(Redis/Bull)"]
+    end
+
+    %% ===== User to Frontend =====
+    A --> FA
+    A --> FB
+    B --> FC
+    C --> FA
+
+    %% ===== Frontend to Backend (HTTPS/REST API) =====
+    FA -->|"HTTPS / REST API<br>(錄音/上傳/Chat)"| API
+    FB -->|"HTTPS / REST API<br>(錄音/上傳/Chat)"| API
+    FC -->|"HTTPS / REST API<br>(監控/統計)"| API
+
+    %% ===== Backend Internal (API Calls / Events) =====
+    API -->|"gRPC / HTTP<br>(ASR 請求)"| ASR
+    API -->|"Job Event<br>(放入佇列)"| QUEUE
+    API -->|"HTTP<br>(Chat 查詢)"| CHAT
+    API -->|"HTTP<br>(指標查詢)"| MON
+
+    %% ===== Job Queue Processing (Event-driven) =====
+    QUEUE -->|"Job Event<br>(消費任務)"| LLM
+    ASR -->|"Job Event<br>(觸發 LLM)"| QUEUE
+
+    %% ===== Service to Database (TCP/Connection Pool) =====
+    ASR -->|"SQL<br>(儲存逐字稿)"| DB
+    LLM -->|"SQL<br>(儲存結果)"| DB
+    CHAT -->|"SQL<br>(查詢/寫入)"| DB
+    API -->|"SQL<br>(資料查詢)"| DB
+
+    %% ===== Storage Access (File I/O) =====
+    ASR -->|"File Read<br>(讀取音檔)"| STORAGE
+    API -->|"File Write<br>(儲存音檔)"| STORAGE
+
+    %% ===== Monitoring (WebSocket/Push) =====
+    MON -->|"WebSocket<br>(推送系統狀態)"| FC
