@@ -36,18 +36,35 @@
 
 ## 系統說明
 
-### Sentinel Server
+### 外部雲端系統 (Cloud Infrastructure)
+
+#### Relay Service
+- **部署位置**: Cloud (SaaS)
+- **功能**: NAT 穿透、流量轉發
+- **用途**: 解決 On-Premise Server 位於 NAT 後方、無固定 IP 的連線問題
+- **實作**: Cloudflare Tunnel、ngrok、自建 relay 等
+
+#### SaaS Control Plane
+- **部署位置**: Cloud (SaaS)
+- **功能**: 用戶認證、JWT 簽發、設備註冊、租戶管理
+- **用途**: 提供登入驗證與設備綁定服務
+
+### On-Premise 系統
+
+#### Sentinel Server
 - **部署位置**: On-Premise (客戶端 PC)
 - **功能**: 會議錄音、ASR 轉寫、AI 分析、Chat 查詢
-- **特點**: 完全獨立運行，不依賴外部服務
+- **特點**: 本地驗證 JWT，日常使用不依賴 SaaS
 
 ---
 
 ## 關鍵觀察
 
-1. **系統獨立性**: Sentinel Server 不依賴任何外部系統，所有功能（ASR、LLM）皆為內部實作
-2. **使用者權限分層**: 三種使用者角色有明確的權限區分
-3. **互動簡潔**: Context 層級只展示「誰與系統互動」，不涉及內部實作細節
+1. **Relay 模式**: 系統使用 Relay Service 進行 NAT 穿透，解決 On-Premise Server 無固定 IP 的連線問題
+2. **本地驗證**: Sentinel Server 本地驗證 JWT，日常使用不經過 SaaS，降低延遲並支援離線運作
+3. **SaaS 用途**: SaaS Control Plane 僅用於登入認證和設備管理，資料流量不經過 SaaS
+4. **使用者權限分層**: 三種使用者角色有明確的權限區分
+5. **互動簡潔**: Context 層級只展示「誰與系統互動」，不涉及內部實作細節
 
 ---
 

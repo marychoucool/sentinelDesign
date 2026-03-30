@@ -4,10 +4,23 @@ flowchart LR
     AdminUser["Admin User<br>(Dashboard)"]
     RootUser["Root User<br>(Debug / Dev)"]
 
-    %% ===== System =====
+    %% ===== External Cloud Systems =====
+    subgraph Cloud ["Cloud Infrastructure (SaaS)"]
+        RelayService["Relay Service<br>(NAT Traversal)"]
+        SaaSService["SaaS Control Plane<br>(Auth / Device Registry)"]
+    end
+
+    %% ===== On-Premise System =====
     SentinelServer["Sentinel Server<br>(On-Premise)"]
 
-    %% ===== User Interactions =====
-    NormalUser -->|錄音 / 上傳 / Chat 查詢| SentinelServer
-    AdminUser -->|監控系統、查看統計| SentinelServer
+    %% ===== User → SaaS (Auth) =====
+    NormalUser -->|Login / Get JWT| SaaSService
+    AdminUser -->|Login / Get JWT| SaaSService
+
+    %% ===== User → Relay → Server (Data flows) =====
+    NormalUser -->|Audio / Chat| RelayService
+    RelayService -->|Relay Traffic| SentinelServer
+    AdminUser -->|Monitor / Setup| RelayService
+
+    %% ===== Root User Direct =====
     RootUser -->|Debug / 全權限存取| SentinelServer

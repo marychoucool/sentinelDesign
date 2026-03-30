@@ -10,7 +10,7 @@
 - 🌐 **NAT 穿透**：Relay Service 解決無固定 IP 問題
 - 🔐 **本地驗證**：Server 本地驗證 JWT，日常使用不經過 SaaS
 - 🔌 **零接觸部署**：Server 開機自動註冊，支援 Ethernet/WiFi 連網
-- 🏢 **Multi-Tenant**：各租戶獨立 domain，資料隔離
+- 🏢 **Multi-Tenant**：統一 Relay + JWT tenant_id 路由，資料隔離
 
 ---
 
@@ -24,11 +24,16 @@
 | **Relay Service** | 轉發請求，解決 NAT 問題 | Cloud (SaaS) |
 | **Sentinel Server** | 核心服務，處理請求 | 客戶公司內 (On-Prem) |
 
-```
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│  Mobile Device  │  ────>  │  Relay Service  │  <────  │ Sentinel Server │
-│                 │         │  (抽象層)       │  ────   │  (On-Prem)      │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
+```mermaid
+flowchart LR
+    MD["Mobile Device<br/>(用戶手機/筆電)<br/>用戶端，發起請求"]
+
+    RS["Relay Service<br/>(Cloud SaaS)<br/>轉發請求，解決 NAT 問題"]
+
+    SS["Sentinel Server<br/>(On-Prem)<br/>核心服務，處理請求"]
+
+    MD -->|"HTTPS / WebSocket"| RS
+    RS <-->|"Tunnel 轉發"| SS
 ```
 
 > **Relay Service** 可實作為：Cloudflare Tunnel、ngrok、自建 relay 等
@@ -58,42 +63,45 @@
 
 ```mermaid
 flowchart LR
-    subgraph Mobile["Mobile Device"]
+    subgraph Mobile["Mobile Dvice"]
         App["Mobile App"]
     end
 
-    subgraph Relay["Relay Service (抽象層)"]
-        Edge["Relay Endpoint<br>(固定 Domain)"]
+    subgraph Relay["Relay Service (IDC)"]
+        Edge["Relay Endpoint<br/>relay.sentinel.com"]
+        Router["Tenant Router<br/>根據 JWT tenant_id 路由"]
     end
 
     subgraph OnPrem["On-Prem Server"]
-        TunnelClient["Tunnel Client<br>(outbound agent)"]
-        Server["Sentinel Server<br>(ASR/LLM/API)"]
+        TunnelClient["Tunnel Client<br/>outbound agent"]
+        Server["Sentinel Server<br/>ASR/LLM/API"]
     end
 
     subgraph ControlPlane["Control Plane (SaaS)"]
-        Auth["Auth API<br>(JWT)"]
-        DeviceReg["Device Registry<br>(serial → tenant)"]
+        Auth["Auth API<br/>JWT"]
+        DeviceReg["Device Registry<br/>serial → tenant"]
     end
 
     %% Normal Phase: 資料流
-    App -->|"① wss://xxx.sentinel.com"| Edge
-    Edge -->|"② relay"| TunnelClient
-    TunnelClient -->|"③ local forward"| Server
+    App -->|"① wss://relay.sentinel.com<br/>+ JWT (tenant_id)"| Edge
+    Edge -->|"② 驗證 JWT<br/>提取 tenant_id"| Router
+    Router -->|"③ 根據 tenant_id 路由"| TunnelClient
+    TunnelClient -->|"④ local forward"| Server
 
     %% Auth: 控制流
-    App -.->|"④ login (JWT)"| Auth
+    App -.->|"⑤ login (JWT)"| Auth
 
     %% Server: 維持 tunnel
-    TunnelClient -.->|"⑤ outbound"| Edge
+    TunnelClient -.->|"⑥ outbound"| Edge
 
     %% Server auto-register
-    Server -.->|"⑥ auto-register (serial)"| DeviceReg
+    Server -.->|"⑦ auto-register (serial)"| DeviceReg
 
     %% Admin bind device
-    App -.->|"⑦ bind device (serial)"| DeviceReg
+    App -.->|"⑧ bind device (serial)"| DeviceReg
 
     style Edge fill:#f38020
+    style Router fill:#f38020
     style TunnelClient fill:#f38020
     style Auth fill:#e8f4f8
     style DeviceReg fill:#e8f4f8
@@ -102,11 +110,11 @@ flowchart LR
 ### 架構說明
 
 ```
-①②③ 日常使用：Mobile → Relay → Server (WebSocket 資料流)
-④ 登入時：Mobile → Auth API → 取得 JWT (控制流)
-⑤ 維持連線：Server → Relay → outbound tunnel
-⑥ Server 註冊：Server → Device Registry (自動，用 serial number)
-⑦ Admin 綁定：Mobile → Device Registry (綁定設備到租戶)
+①②③④ 日常使用：Mobile → Relay (統一 domain) → 根據 JWT tenant_id 路由 → Server
+⑤ 登入時：Mobile → Auth API → 取得 JWT (控制流)
+⑥ 維持連線：Server → Relay → outbound tunnel
+⑦ Server 註冊：Server → Device Registry (自動，用 serial number)
+⑧ Admin 綁定：Mobile → Device Registry (綁定設備到租戶)
 ```
 
 ---
@@ -120,16 +128,17 @@ flowchart LR
 - Normal Mode：連線、錄音、Chat
 
 **需要的資訊**：
-- Server endpoint：`wss://company-a.sentinel.com`
-- JWT token（從 Auth API 取得）
+- Relay endpoint：`wss://relay.sentinel.com` (所有租戶統一)
+- JWT token（從 Auth API 取得，包含 tenant_id）
 
 ---
 
-### 2. Relay Service (抽象層)
+### 2. Relay Service
 
 **職責**：
-- 提供固定 domain
-- 轉發請求到 on-prem server
+- 提供統一的固定 domain：`relay.sentinel.com`
+- 驗證 JWT，提取 tenant_id
+- 根據 tenant_id 路由到對應的 on-prem server
 - 解決 NAT / 無固定 IP 問題
 
 **實作選項**：
@@ -141,8 +150,8 @@ flowchart LR
 | **ngrok** | 快速原型 | 非企業級 |
 | **Tailscale** | 簡單、安全 | 需安裝 client |
 
-**Server 需要的元件**：
-- `Tunnel Client`：對應實作的 agent（如 cloudflared）
+**decision making**：
+- 自建 Relay(可搭配linode螞蟻戰術)
 
 ---
 
@@ -169,11 +178,11 @@ flowchart LR
 - User 註冊/登入
 - JWT 簽發
 - Tenant 管理
-- Device Registry（tenant ↔ domain mapping）
+- Device Registry（tenant ↔ relay 註冊）
 
 **何時使用**：
 - 登入時：取得 JWT
-- Server 註冊：綁定 domain
+- Server 註冊：綁定到 relay
 
 **何時不使用**：
 - 日常 Audio/Chat：**不經過這裡**
@@ -280,35 +289,33 @@ sequenceDiagram
     Admin->>Admin: 1. 輸入/掃描 Serial Number
     Admin->>SaaS: 2. 綁定請求<br/>POST /devices/bind<br/>Authorization: Bearer JWT<br/>{serial_number}
     SaaS->>SaaS: 3. 從 JWT 取得 tenant_id<br/>驗證 Serial Number<br/>創建租戶關聯
-    SaaS->>Relay: 4. 註冊 Relay Node<br/>{domain, tunnel_config}
-    Relay-->>SaaS: 5. Relay 就緒
-    SaaS->>SaaS: 6. 儲存設定<br/>status = bound
-    SaaS-->>Admin: 7. 綁定成功<br/>{relay_endpoint, status}
+    SaaS->>SaaS: 4. 儲存設定<br/>status = bound
+    SaaS-->>Admin: 5. 綁定成功<br/>{relay_endpoint: "wss://relay.sentinel.com", status}
 
     rect rgb(86, 87, 89)
         Note over Admin: 等待 Server 連線...
-        Admin->>Relay: 8a. 測試連線 Server
-        Relay-->>Admin: 8b. 連線失敗（Server 尚未就緒）
+        Admin->>Relay: 6a. 測試連線 Server (透過 Relay)
+        Relay-->>Admin: 6b. 連線失敗（Server 尚未就緒）
         Admin->>Admin: 等待 5 秒...
     end
 
     rect rgb(69, 73, 64)
         Note over Server: Server 下次輪詢
-        Server->>SaaS: 9. 輪詢綁定狀態<br/>GET /devices/status
-        SaaS-->>Server: 10. status = bound<br/>{jwt_secret, relay_endpoint}
-        Server->>Server: 11. 儲存設定<br/>啟動 Tunnel Client
-        Server->>Relay: 12. 建立 Tunnel 連線
-        Relay-->>Server: 13. 連線成功
+        Server->>SaaS: 7. 輪詢綁定狀態<br/>GET /devices/status
+        SaaS-->>Server: 8. status = bound<br/>{jwt_secret, relay_endpoint}
+        Server->>Server: 9. 儲存設定<br/>啟動 Tunnel Client
+        Server->>Relay: 10. 建立 Tunnel 連線到 wss://relay.sentinel.com
+        Relay-->>Server: 11. 連線成功
         Note over Server,Relay: ✓ Server 就緒，可接受連線
     end
 
     rect rgb(69, 100, 69)
         Note over Admin: 重試連線
-        Admin->>Relay: 14a. 測試連線 Server
-        Relay->>Server: 14b. 轉發請求
-        Server-->>Relay: 14c. Pong 回應
-        Relay-->>Admin: 14d. ✓ 連線成功
-        Admin->>Admin: 15. 顯示「✓ 綁定完成」
+        Admin->>Relay: 12a. 測試連線 Server (透過 Relay)
+        Relay->>Server: 12b. 轉發請求 (根據 tenant_id 路由)
+        Server-->>Relay: 12c. Pong 回應
+        Relay-->>Admin: 12d. ✓ 連線成功
+        Admin->>Admin: 13. 顯示「✓ 綁定完成」
     end
 ```
 
@@ -319,14 +326,13 @@ server:
   device_id: "device_xyz789"
   serial_number: "SN-2024-XXXX"
   tenant_id: "tenant_abc123"
-  domain: "acme.sentinel.com"
 
 jwt:
   secret_file: "/etc/sentinel/secrets/jwt_secret.key"  # 從 SaaS 取得
 
 relay:
-  type: "cloudflare"
-  endpoint: "wss://acme.sentinel.com"
+  type: "custom"
+  endpoint: "wss://relay.sentinel.com"  # 所有租戶統一
 ```
 
 **SaaS API**：
@@ -410,9 +416,8 @@ GET /api/v1/devices/status?serial_number=SN-2024-XXXX
   "device_id": "device_xyz789",
   "status": "bound",
   "tenant_id": "tenant_abc123",
-  "domain": "acme.sentinel.com",
   "jwt_secret": "secret_xxx...",      # 用於本地驗證 JWT
-  "relay_endpoint": "wss://acme.sentinel.com"
+  "relay_endpoint": "wss://relay.sentinel.com"  # 統一 Relay
 }
 
 # 4. Admin 綁定設備（Admin Mobile → SaaS，需 JWT）
@@ -425,8 +430,7 @@ Authorization: Bearer {access_token}
 # Response
 {
   "tenant_id": "tenant_abc123",
-  "domain": "acme.sentinel.com",
-  "relay_endpoint": "wss://acme.sentinel.com",
+  "relay_endpoint": "wss://relay.sentinel.com",  # 統一 Relay
   "device_id": "device_xyz789",
   "status": "bound"
 }
@@ -467,7 +471,7 @@ sequenceDiagram
 
 ### 正常使用（資料流）
 
-> **⚠️ 重要**：此階段 **不經過 SaaS**。Server **本地驗證 JWT**（用共享 secret 或公鑰）。
+> **⚠️ 重要**：此階段 **不經過 SaaS**。Relay **驗證 JWT**，根據 tenant_id 路由到對應 Server。
 
 ```mermaid
 sequenceDiagram
@@ -476,15 +480,13 @@ sequenceDiagram
     participant Server as Sentinel Server
 
     Note over Mobile,Relay: 建立 WebSocket 連線
-    Mobile->>Relay: wss://xxx.sentinel.com
-    Relay->>Server: relay 連線
+    Mobile->>Relay: wss://relay.sentinel.com + JWT
 
-    Note over Mobile,Server: JWT 認證（本地驗證，不經過 SaaS）
-    Mobile->>Relay: {auth, jwt}
-    Relay->>Server: {auth, jwt}
-    Server->>Server: [本地驗證 JWT]<br/>- 簽名檢查<br/>- exp 過期<br/>- tenant_id
-    Server-->>Relay: {auth_ok}
-    Relay-->>Mobile: {auth_ok}
+    Note over Relay: 驗證 JWT，提取 tenant_id
+    Relay->>Relay: [驗證 JWT]<br/>- 簽名檢查<br/>- exp 過期<br/>- 提取 tenant_id
+
+    Note over Relay: 根據 tenant_id 路由
+    Relay->>Server: relay 連線 (根據 tenant_id 找到對應的 tunnel)
 
     Note over Mobile,Server: 正常資料流
     Mobile->>Relay: {audio_chunk}
@@ -527,7 +529,11 @@ POST /auth/login
 {"email": "user@company.com", "password": "..."}
 
 # Response
-{"jwt": "eyJ...", "tenant_id": "tenant_a", "endpoint": "wss://company-a.sentinel.com"}
+{
+  "jwt": "eyJ...",
+  "tenant_id": "tenant_a",
+  "relay_endpoint": "wss://relay.sentinel.com"  # 統一 Relay
+}
 ```
 
 ### WebSocket 訊息
@@ -620,8 +626,9 @@ POST /auth/login
 ### Tenant Isolation
 
 ```
-- 不同 tenant = 不同 subdomain
+- 所有 tenant = 統一連接 relay.sentinel.com
 - JWT 包含 tenant_id
+- Relay 根據 tenant_id 路由到對應的 Server
 - Server 根據 tenant_id 隔離資料
 ```
 
@@ -630,9 +637,14 @@ POST /auth/login
 ## 📊 Multi-Tenant
 
 ```
-Tenant A: company-a.sentinel.com → Server A
-Tenant B: company-b.sentinel.com → Server B
-Tenant C: company-c.sentinel.com → Server C
+所有 Tenant: relay.sentinel.com (統一 Relay)
+               ↓
+         根據 JWT tenant_id 路由
+               ↓
+    ┌──────────┼──────────┐
+    ↓          ↓          ↓
+Server A    Server B    Server C
+(tenant_a) (tenant_b) (tenant_c)
 ```
 
 ---

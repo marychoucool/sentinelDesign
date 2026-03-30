@@ -9,19 +9,28 @@ flowchart TD
         FrontendApp["Frontend App<br>(Desktop/iOS/Android)"]
     end
 
-    %% ===== System Boundary =====
+    %% ===== Cloud Systems (Outside Sentinel Server) =====
+    subgraph Cloud ["Cloud Infrastructure (SaaS)"]
+        RelayEndpoint["Relay Endpoint<br>(NAT Traversal)"]
+        AuthAPI["Auth API (SaaS)<br>(JWT Signing)"]
+        DeviceRegistry["Device Registry (SaaS)<br>(Serial → Tenant)"]
+    end
+
+    %% ===== On-Premise System =====
     subgraph Backend ["Sentinel Server<br>(On-Premise)"]
+        %% ===== Tunnel Client =====
+        TunnelClient["Tunnel Client<br>(Outbound Agent)"]
+
         %% ===== Backend API =====
-        BackendAPI["Backend API<br>(NestJS + Local Storage + Monitoring)"]
+        BackendAPI["Backend API<br>(NestJS + Local JWT Validation + Monitoring)"]
 
         %% ===== Services =====
-        ASRService["ASR Service<br>: Streaming + Batch Speech to Text"]
+        ASRService["ASR Service<br>: Batch Speech to Text"]
         LLMService["LLM Batch Service<br>: Summary / Action / Embedding"]
-        ChatService["Chat Service<br>: Chat Query Processing"]
+        ChatService["Chat Service<br>: Chat Query Processing (WebSocket)"]
 
         %% ===== Data Stores =====
-        Database["Database<br>(PostgreSQL + pgvector)"]
-        WorkflowEngine["Workflow Engine<br>(Temporal.io / BullMQ)"]
+        Database["Database<br>(PostgreSQL + pgvector)<br>(含 jobs 表)"]
     end
 
     %% ===== User to Frontend =====
@@ -29,29 +38,36 @@ flowchart TD
     AdminUser --> FrontendApp
     RootUser --> FrontendApp
 
-    %% ===== Frontend to Backend =====
-    FrontendApp -->|"WebSocket<br>(實時音訊串流 + Chat Streaming)"| BackendAPI
-    FrontendApp -->|"HTTPS / REST API<br>(錄音/上傳/其他查詢)"| BackendAPI
-    BackendAPI -->|"WebSocket<br>(推送監控數據)"| FrontendApp
+    %% ===== Frontend → Cloud (Auth + Relay) =====
+    FrontendApp -->|"HTTPS / Login / Refresh JWT"| AuthAPI
+    FrontendApp -->|"HTTPS / Bind Device"| DeviceRegistry
+    FrontendApp -->|"HTTPS / Upload Audio<br>/ WebSocket / Chat Streaming"| RelayEndpoint
 
-    %% ===== Backend Internal (Real-time Streaming) =====
-    BackendAPI -->|"gRPC Streaming<br>(錄音中)"| ASRService
-    ASRService -->|"推送逐字稿"| BackendAPI
+    %% ===== Cloud → On-Prem (Relay path) =====
+    RelayEndpoint -->|"Relay Traffic"| TunnelClient
+    TunnelClient -->|"Local Forward"| BackendAPI
 
-    %% ===== Backend Internal (Batch Processing) =====
-    BackendAPI -->|"Start Workflow<br>(ASR → LLM)"| WorkflowEngine
+    %% ===== On-Prem (Tunnel Client → Relay) =====
+    TunnelClient -.->|"Outbound Tunnel"| RelayEndpoint
+
+    %% ===== Server → SaaS (Registration only) =====
+    BackendAPI -.->|"HTTPS / Auto-Register Serial"| DeviceRegistry
+    BackendAPI -.->|"HTTPS / Poll Binding Status"| DeviceRegistry
+
+    %% ===== Root User Direct (for debugging) =====
+    RootUser -.->|"Direct LAN Access (HTTPS)"| BackendAPI
+
+
+    %% ===== Backend Internal (WebSocket for Chat only) =====
     BackendAPI -->|"WebSocket Streaming<br>(Chat 查詢)"| ChatService
 
-    %% ===== Workflow Processing =====
-    WorkflowEngine -->|"Activity<br>: ASR Batch"| ASRService
-    WorkflowEngine -->|"Activity<br>: LLM Batch"| LLMService
-    ASRService -->|"Workflow Signal<br>(完成 → 觸發 LLM)"| WorkflowEngine
+    %% ===== Async Job Processing =====
+    BackendAPI -->|"INSERT Job (pending)"| Database
+    ASRService -->|"Poll ASR Jobs<br>SELECT & UPDATE"| Database
+    LLMService -->|"Poll LLM Jobs<br>SELECT & UPDATE"| Database
 
     %% ===== Service to Database (TCP/Connection Pool) =====
     ASRService -->|"SQL<br>(儲存逐字稿)"| Database
     LLMService -->|"SQL<br>(儲存結果)"| Database
     ChatService -->|"SQL<br>(查詢/寫入)"| Database
     BackendAPI -->|"SQL<br>(資料查詢)"| Database
-
-    %% ===== Storage Access =====
-    ASRService -->|"HTTP<br>(讀取音檔)"| BackendAPI
