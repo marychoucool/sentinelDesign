@@ -233,3 +233,44 @@ EXPIRE quota:connections:acme 3600
 - [Context Diagram](./contextDiagram.md)
 - [System Architecture](./systemArch.md)
 - [Connectivity Architecture](./connectivityArch.md)
+
+---
+
+## 9. Nginx + Rust 優缺點分析
+
+### 9.1 優點
+
+| 項目 | 說明 |
+|------|------|
+| **職責分離** | Nginx 處理 TLS/限流，Rust 專注於業務邏輯 |
+| **成熟穩定** | Nginx 經過 20+ 年生產驗證 |
+| **TLS 管理** | Let's Encrypt 自動續期，配置簡單 |
+| **限流保護** | 開箱即用的限流、IP 過濾 |
+| **部署靈活** | 可獨立升級 Nginx 或 Rust |
+| **日誌統一** | Nginx 統一管理存取日誌 |
+
+### 9.2 缺點
+
+| 項目 | 說明 |
+|------|------|
+| **多一層轉發** | 本地 loopback 轉發，延遲增加 ~0.1-0.5ms |
+| **部署複雜** | 需要管理兩個服務 (Nginx + Rust) |
+| **配置分散** | Nginx 配置 + Rust 配置 |
+
+### 9.3 對比純 Rust
+
+| 維度 | 純 Rust | Nginx + Rust |
+|------|---------|--------------|
+| **部署複雜度** | ⭐⭐ 單一二進制 | ⭐⭐⭐ 兩個服務 |
+| **TLS 成熟度** | ⭐⭐ rustls 較新 | ⭐⭐⭐⭐⭐ OpenSSL |
+| **限流功能** | ⭐⭐ 需自己實現 | ⭐⭐⭐⭐⭐ 內建 |
+| **延遲** | ⭐⭐⭐⭐⭐ 無轉發 | ⭐⭐⭐⭐ +0.1ms |
+| **運維難度** | ⭐⭐ 簡單 | ⭐⭐⭐ 需了解 Nginx |
+
+### 9.4 結論
+
+**推薦使用 Nginx + Rust**：
+- TLS、限流、日誌等「雜事」交給 Nginx
+- Rust 專注於 WebSocket 轉發和路由邏輯
+- 延遲增加可忽略不計 (~0.1ms)
+- 生產環境更穩定可靠
