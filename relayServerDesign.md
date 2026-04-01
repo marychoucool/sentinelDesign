@@ -2,9 +2,12 @@
 
 設計自建 Relay Server，實現 NAT 穿透，讓 Mobile Client 能連接到客戶 On-Premise 的 Sentinel Server。
 
-**架構**：Nginx + Rust + Redis
-**目標讀者**：後端工程師、系統架構師
-**最後更新**：2026-03-30
+**架構**：純 TCP 轉發（最簡設計）
+
+**核心設計決策**：
+- Relay **不處理認證**，所有 Auth 邏輯由 Sentinel Server 處理
+- Relay 是純粹的 TCP 轉發器
+- 所有安全檢查（Rate Limiting、IP Blocking 等）**都不在 Relay 層做**
 
 ---
 
@@ -12,13 +15,13 @@
 
 | 比較項目 | ngrok (SaaS) | 自建 Relay Server |
 |---------|--------------|-------------------|
-| **部署複雜度** | ⭐ 極簡 | ⭐⭐⭐ 需自行開發 |
+| **部署複雜度** | ⭐ 極簡 | ⭐⭐ 需自行開發 |
 | **成本** | 💰 ~$216/月/連線 | 💰 ~$50/月（統一） |
 | **多租戶隔離** | ❌ 需用 subdomain 區分 | ✅ 原生支援 |
-| **與 Auth API 整合** | ❌ 需額外整合 | ✅ 深度整合 |
+| **認證處理** | ❌ 需額外整合 | ✅ Sentinel 完全掌控 |
 | **資料隱私** | ⚠️ 流量經 ngrok | ✅ 流量經我們自己的 IDC |
 
-**結論**：選擇自建，成本在規模化後更低、可與現有服務深度整合。
+**結論**：選擇自建，成本在規模化後更低、Sentinel 完全掌控認證邏輯。
 
 ---
 
@@ -29,52 +32,35 @@
 ```mermaid
 flowchart TB
     subgraph Clients["Mobile Clients (外網)"]
-        Client1["Client A<br/>(Tenant: acme)"]
-        Client2["Client B<br/>(Tenant: beta)"]
+        Client1["Client A"]
+        Client2["Client B"]
     end
 
     subgraph IDC["IDC 落地機器<br/>固定 IP"]
-        subgraph NginxLayer["Nginx<br/>:443"]
-            TLS["TLS 終結"]
-            Proxy["WebSocket 代理"]
-        end
-
         subgraph Relay["Relay Server (Rust)<br/>:8443"]
-            WSS["WebSocket Server"]
-            Router["Tenant Router"]
+            TCPRelay["純 TCP 轉發"]
             TunnelMgr["Tunnel Manager"]
         end
 
-        subgraph Storage["Redis<br/>:6379"]
+        subgraph Storage["In-Memory Storage"]
             TunnelTable["Tunnel Registry<br/>tenant_id → tunnel_id"]
-            QuotaTable["Quota Counters"]
-        end
-
-        subgraph SaaS["SaaS Control Plane (雲端)"]
-            AuthSvc["Auth API"]
         end
     end
 
-    subgraph CustomerA["客戶 A On-Prem"]
-        ServerA["Sentinel Server<br/>+ Tunnel Client"]
+    subgraph CustomerA["客戶 A On-Prem (NAT 後方)"]
+        ServerA["Sentinel Server<br/>+ Auth + Tunnel Client"]
     end
 
-    subgraph CustomerB["客戶 B On-Prem"]
-        ServerB["Sentinel Server<br/>+ Tunnel Client"]
+    subgraph CustomerB["客戶 B On-Prem (NAT 後方)"]
+        ServerB["Sentinel Server<br/>+ Auth + Tunnel Client"]
     end
 
-    Client1 --> TLS
-    Client2 --> TLS
-    TLS --> Proxy
-    Proxy --> WSS
-    WSS --> Router
-    Router --> TunnelTable
-    Router --> AuthSvc
-    Router --> QuotaTable
+    Client1 --> TCPRelay
+    Client2 --> TCPRelay
+    TCPRelay --> TunnelTable
     TunnelMgr --> ServerA
     TunnelMgr --> ServerB
 
-    style NginxLayer fill:#e8f5e9,stroke:#4caf50
     style Relay fill:#fff3e0,stroke:#ff9800
     style Storage fill:#f3e5f5,stroke:#9c27b0
 ```
@@ -82,58 +68,76 @@ flowchart TB
 ### 1.2 連線流向
 
 ```
-Mobile (外網) → Nginx (TLS) → Relay (Rust) → On-Prem Sentinel Server (NAT 後方)
+Mobile (外網) → Relay (純 TCP 轉發) → On-Prem Sentinel Server (NAT 後方)
+                    ↓
+              不做任何認證
 ```
 
 **核心設計**：
-1. 所有 Client 連到 `wss://relay.sentinel.com`
-2. JWT 中帶有 `tenant_id`
-3. Relay 根據 `tenant_id` 查 Redis，路由到對應的 Tunnel
+1. 所有 Client 連到 `relay.sentinel.com:8443`
+2. Relay 根據連線來源決定轉發目標
+3. **認證完全由 Sentinel Server 處理**
 4. 客戶 Server 主動建立 outbound 連線到 Relay
 
 ### 1.3 核心元件
 
 | 元件 | 職責 |
 |------|------|
-| **Nginx** | TLS 終結、限流、WebSocket 轉發 |
-| **WebSocket Server** | 接受 Client 和 Tunnel 連線 |
-| **Tenant Router** | 根據 JWT tenant_id 路由 |
+| **TCP 轉發** | 純粹轉發 TCP 流量，不做任何處理 |
 | **Tunnel Manager** | 管理 Tunnel 連線、心跳 |
-| **Redis** | Tunnel 註冊、連線狀態、配額 |
+| **In-Memory Storage** | Tunnel 註冊表（HashMap） |
 
 ---
 
 ## 2. 資料流設計
 
-### 2.1 Tunnel 註冊與連接流程
+### 2.1 使用者註冊流程
+
+```mermaid
+sequenceDiagram
+    participant Deployer as 系統部署者
+    participant Sentinel as Sentinel Server
+    participant Relay as Relay Server
+    participant Mem as In-Memory
+
+    Note over Deployer,Mem: Sentinel 完成聯網後，部署者新增使用者
+    Deployer->>Sentinel: 1. 新增使用者 (alice@acme.com)
+    Sentinel->>Relay: 2. 註冊使用者 {email, tenant_id}
+    Relay->>Mem: 3. user_to_tenant.insert("alice@acme.com", "acme")
+    Relay-->>Sentinel: 4. 註冊成功
+```
+
+### 2.2 Tunnel 註冊與連接流程
 
 ```mermaid
 sequenceDiagram
     participant Server as On-Prem Server
     participant Relay as Relay Server
-    participant Redis as Redis
+    participant Mem as In-Memory
     participant Client as Mobile Client
 
-    Note over Server,Redis: 階段 1: Server 主動連接
-    Server->>Relay: 1. WebSocket (Outbound)
-    Server->>Relay: 2. Tunnel 註冊 {tunnel_id, tenant_id}
-    Relay->>Redis: 3. HSET tunnel:registry:{tenant_id}
+    Note over Server,Mem: 階段 1: Server 主動連接
+    Server->>Relay: 1. TCP Outbound 連線
+    Server->>Relay: 2. Tunnel 註冊 {tenant_id}
+    Relay->>Mem: 3. tunnels.insert(tenant_id, tunnel_info)
     Relay-->>Server: 4. 連線成功
 
-    Note over Server,Redis: 階段 2: Mobile 連接
-    Client->>Relay: 5. WebSocket 連線
-    Client->>Relay: 6. Auth message (JWT with tenant_id)
-    Relay->>Relay: 7. 驗證 JWT
-    Relay->>Redis: 8. HGET tunnel:registry:{tenant_id}
-    Redis-->>Relay: 9. 返回 tunnel_id
-    Relay-->>Client: 10. Auth OK
+    Note over Server,Mem: 階段 2: Mobile 連接
+    Client->>Relay: 5. TCP 連線
+    Client->>Relay: 6. 路由請求 (帶 email)
+    Relay->>Mem: 7. user_to_tenant.get(email)
+    Mem-->>Relay: 8. 返回 tenant_id
+    Relay->>Mem: 9. tunnels.get(tenant_id)
+    Mem-->>Relay: 10. 返回 tunnel_info
+    Relay->>Server: 11. 轉發 TCP 流量
+    Server->>Server: 12. 驗證用戶認證
 ```
 
 ### 2.2 訊息轉發
 
 ```
-Client → Relay → Server (On-Prem)
-       ←        ←
+Client → Relay (不驗證) → Server (On-Prem, 驗證 Auth)
+       ←                 ←
 ```
 
 ---
@@ -142,23 +146,25 @@ Client → Relay → Server (On-Prem)
 
 ### 3.1 路由機制
 
-**所有 Client 連到同一個 domain**：
+**所有 Client 連到同一個 endpoint**：
 ```
-wss://relay.sentinel.com
+relay.sentinel.com:8443
 ```
 
-**Relay 根據 JWT 中的 tenant_id 路由**：
+**Relay 根據請求中的 email 查找 tenant_id，然後路由**：
 ```rust
-let tenant_id = verify_jwt(jwt)?.tenant_id;  // "acme"
-let tunnel = redis.get(format!("tunnel:registry:{}", tenant_id))?;
-forward(websocket, tunnel);
+// Relay 只轉發，不驗證
+let email = extract_email(&packet)?;  // 從封包提取 email
+let tenant_id = user_to_tenant.get(&email)?;  // 查找對應的 tenant_id
+let tunnel = tunnels.get(&tenant_id)?;  // 查找對應的 Tunnel
+forward(tcp_stream, tunnel);
 ```
 
 ### 3.2 隔離保證
 
-- ✅ Tenant A 的流量無法訪問 Tenant B 的 Tunnel
-- ✅ 每個 Tenant 獨立的配額限制
-- ✅ 租戶間的連線計數隔離
+- ✅ Tenant A 的流量路由到 Tenant A 的 Tunnel
+- ⚠️ **安全由 Sentinel Server 保證**，Relay 不做驗證
+- ⚠️ 惡意 Client 可以發送垃圾流量，但 Sentinel 會拒絕無效請求
 
 ---
 
@@ -166,22 +172,42 @@ forward(websocket, tunnel);
 
 ### 4.1 連接方式
 
-| 來源 | URL | 認證 |
-|------|-----|------|
-| **Mobile Client** | `wss://relay.sentinel.com` | JWT (第一條訊息) |
-| **On-Prem Server** | `wss://relay.sentinel.com/tunnel` | Tunnel Token |
+| 來源 | 連接方式 | 認證 |
+|------|---------|------|
+| **Mobile Client** | TCP → `relay.sentinel.com:8443` | **由 Sentinel 驗證** |
+| **Sentinel Server** | TCP Outbound → `relay.sentinel.com:8443` | Tunnel Token |
+| **Sentinel Server** → Relay | 註冊使用者 | 無需認證 |
 
-### 4.2 訊息格式
+### 4.2 Sentinel 註冊使用者
+
+當 Sentinel 新增使用者時，會通知 Relay：
+
+```json
+// Sentinel → Relay
+{
+  "type": "register_user",
+  "email": "alice@acme.com",
+  "tenant_id": "acme"
+}
+```
+
+### 4.3 Client 路由封包格式
+
+Client 連線後第一個封包必須包含 email：
 
 ```json
 {
-  "type": "auth|data|heartbeat|close",
-  "tenant_id": "acme",
-  "tunnel_id": "...",
-  "payload": "base64_data",
-  "sequence": 123
+  "type": "route",
+  "email": "alice@acme.com"
 }
 ```
+
+Relay 收到後：
+1. 提取 email
+2. 查 HashMap 找到對應的 tenant_id
+3. 查 HashMap 找到對應的 Tunnel
+4. 後續所有流量轉發到該 Tunnel
+5. **不驗證任何認證資訊**
 
 ---
 
@@ -192,13 +218,15 @@ forward(websocket, tunnel);
 | 方向 | 間隔 | 超時 |
 |------|------|------|
 | Relay → Tunnel | 30s | 90s |
-| Client → Relay | 45s | 120s |
+| Tunnel → Relay | 30s | 90s |
+
+**注意**：Relay 不對 Client 做心跳檢查，由 Sentinel Server 管理 Client 連線狀態。
 
 ### 5.2 重連策略
 
 ```
-指數退避: 1s → 2s → 4s → 8s (max)
-最多重試: 10 次
+Tunnel 重連: 指數退避 1s → 2s → 4s → 8s (max)
+Client 重連: 由 Sentinel Server 控制
 ```
 
 ---
@@ -207,23 +235,48 @@ forward(websocket, tunnel);
 
 | 組件 | 技術選擇 |
 |------|---------|
-| **反向代理** | Nginx |
 | **核心服務** | Rust + tokio |
-| **WebSocket** | tokio-tungstenite |
-| **狀態存儲** | Redis |
+| **TCP 轉發** | tokio-net |
+| **狀態存儲** | In-memory HashMap (std::collections::HashMap) |
+
+**移除的組件**：
+- ❌ Nginx（不需要，直接用 Rust 處理 TCP）
+- ❌ Redis（用 in-memory HashMap 即可）
+- ❌ WebSocket 庫（用純 TCP 即可）
+- ❌ 任何認證相關庫
 
 ---
 
-## 7. Redis 數據結構
+## 7. In-Memory 數據結構
 
-```
-# Tunnel 註冊表
-HSET tunnel:registry:{tenant_id} tunnel_id "xxx" status "active" last_heartbeat 1735689600
+```rust
+// Relay 註冊表
+struct TunnelRegistry {
+    // email → tenant_id (Sentinel 註冊使用者時)
+    user_to_tenant: HashMap<String, String>,
 
-# 配額計數器
-INCR quota:connections:acme
-EXPIRE quota:connections:acme 3600
+    // tenant_id → tunnel 連線資訊
+    tunnels: HashMap<String, TunnelInfo>,
+}
+
+struct TunnelInfo {
+    connection: TcpStream,
+    status: TunnelStatus,
+    last_heartbeat: Instant,
+}
+
+enum TunnelStatus {
+    Active,
+    Idle,
+}
 ```
+
+**特點**：
+- ✅ 無需外部依賴
+- ✅ 極快查詢速度（O(1)）
+- ⚠️ Relay 重啟後所有資料丟失
+  - Tunnel 會自動重連
+  - Sentinel 需要重新註冊使用者（或在啟動時同步一次）
 
 ---
 
@@ -236,41 +289,29 @@ EXPIRE quota:connections:acme 3600
 
 ---
 
-## 9. Nginx + Rust 優缺點分析
+## 9. 純 Rust 架構分析
 
 ### 9.1 優點
 
 | 項目 | 說明 |
 |------|------|
-| **職責分離** | Nginx 處理 TLS/限流，Rust 專注於業務邏輯 |
-| **成熟穩定** | Nginx 經過 20+ 年生產驗證 |
-| **TLS 管理** | Let's Encrypt 自動續期，配置簡單 |
-| **限流保護** | 開箱即用的限流、IP 過濾 |
-| **部署靈活** | 可獨立升級 Nginx 或 Rust |
-| **日誌統一** | Nginx 統一管理存取日誌 |
+| **極簡架構** | 單一二進制文件，無需 Nginx |
+| **低延遲** | 無額外轉發層 |
+| **易部署** | 單一服務，運維簡單 |
+| **職責清晰** | Relay 只做轉發，Auth 由 Sentinel 處理 |
 
-### 9.2 缺點
+### 9.2 缺點 / 風險
 
 | 項目 | 說明 |
 |------|------|
-| **多一層轉發** | 本地 loopback 轉發，延遲增加 ~0.1-0.5ms |
-| **部署複雜** | 需要管理兩個服務 (Nginx + Rust) |
-| **配置分散** | Nginx 配置 + Rust 配置 |
+| **無保護機制** | 任何人都可連接 Relay（但 Sentinel 會拒絕無效請求） |
+| **DDoS 風險** | 惡意流量可直接打到任何 Sentinel |
+| **無法追蹤來源** | 真實 Client IP 被 Relay 隱藏 |
 
-### 9.3 對比純 Rust
+### 9.3 結論
 
-| 維度 | 純 Rust | Nginx + Rust |
-|------|---------|--------------|
-| **部署複雜度** | ⭐⭐ 單一二進制 | ⭐⭐⭐ 兩個服務 |
-| **TLS 成熟度** | ⭐⭐ rustls 較新 | ⭐⭐⭐⭐⭐ OpenSSL |
-| **限流功能** | ⭐⭐ 需自己實現 | ⭐⭐⭐⭐⭐ 內建 |
-| **延遲** | ⭐⭐⭐⭐⭐ 無轉發 | ⭐⭐⭐⭐ +0.1ms |
-| **運維難度** | ⭐⭐ 簡單 | ⭐⭐⭐ 需了解 Nginx |
-
-### 9.4 結論
-
-**推薦使用 Nginx + Rust**：
-- TLS、限流、日誌等「雜事」交給 Nginx
-- Rust 專注於 WebSocket 轉發和路由邏輯
-- 延遲增加可忽略不計 (~0.1ms)
-- 生產環境更穩定可靠
+**使用純 Rust 架構**：
+- 最簡單的實現
+- Relay 只做 TCP 轉發
+- 所有安全邏輯由 Sentinel Server 處理
+- 適合初期快速開發，後續可根據需求加入保護機制

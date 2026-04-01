@@ -5,22 +5,25 @@ flowchart LR
     RootUser["Root User<br>(Debug / Dev)"]
 
     %% ===== External Cloud Systems =====
-    subgraph Cloud ["Cloud Infrastructure (SaaS)"]
-        RelayService["Relay Service<br>(NAT Traversal)"]
-        SaaSService["SaaS Control Plane<br>(Auth / Device Registry)"]
+    subgraph Cloud ["Cloud Infrastructure (SaaS/IDC)"]
+        RelayService["Relay Service<br>(純 TCP 轉發)"]
+        DeviceRegistry["Device Registry<br>(Email → Tenant)"]
     end
 
     %% ===== On-Premise System =====
-    SentinelServer["Sentinel Server<br>(On-Premise)"]
-
-    %% ===== User → SaaS (Auth) =====
-    NormalUser -->|Login / Get JWT| SaaSService
-    AdminUser -->|Login / Get JWT| SaaSService
+    SentinelServer["Sentinel Server<br>(On-Premise + Auth)"]
 
     %% ===== User → Relay → Server (Data flows) =====
-    NormalUser -->|Audio / Chat| RelayService
-    RelayService -->|Relay Traffic| SentinelServer
-    AdminUser -->|Monitor / Setup| RelayService
+    NormalUser -->|"Audio / Chat (外網)"| RelayService
+    RelayService -->|"Relay Traffic"| SentinelServer
+    AdminUser -->|"Monitor / Setup (外網)"| RelayService
+
+    %% ===== Direct LAN Access =====
+    NormalUser -.->|"Audio / Chat (區網)"| SentinelServer
+    AdminUser -.->|"Monitor / Setup (區網)"| SentinelServer
+
+    %% ===== Sentinel → Device Registry =====
+    SentinelServer -.->|"註冊使用者"| DeviceRegistry
 
     %% ===== Root User Direct =====
-    RootUser -->|Debug / 全權限存取| SentinelServer
+    RootUser -->|"Debug / 全權限存取"| SentinelServer

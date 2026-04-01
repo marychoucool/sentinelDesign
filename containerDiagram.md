@@ -20,15 +20,16 @@
 
 | 容器 | 技術 | 職責 |
 |------|------|------|
-| **Frontend App** | Desktop / iOS / Android | 錄音、上傳、Chat 查詢 |
+| **Frontend App** | Desktop / iOS / Android | 錄音、上傳、Chat 查詢（Normal User / Admin User 使用） |
+
+> **Root User**: 不使用 Frontend App，透過 shell 直連 Backend API 進行開發調試
 
 ### 雲端基礎設施 (Cloud Infrastructure - SaaS)
 
 | 容器 | 技術 | 職責 |
 |------|------|------|
-| **Relay Endpoint** | 自建 Relay Server (Rust) | NAT 穿透、流量轉發、根據 JWT tenant_id 路由 |
-| **Auth API** | REST API | JWT 簽發、用戶認證、Token 刷新 |
-| **Device Registry** | Database + API | 設備註冊、Serial Number → Tenant 映射 |
+| **Relay Endpoint** | 自建 Relay Server (Rust) | 純 TCP 轉發（不做認證） |
+| **Device Registry** | Database + API | Email → Tenant 映射、使用者註冊 |
 
 ### 後端容器 (Sentinel Server - On-Premise)
 
@@ -56,14 +57,11 @@
 
 | 連結 | 協定 | 用途 |
 |------|------|------|
-| Frontend → Auth API | **HTTPS** | 登入、取得 JWT、刷新 Token |
-| Frontend → Device Registry | **HTTPS** | 綁定設備到租戶 |
-| Frontend → Relay Endpoint | **HTTPS / WebSocket** | 上傳音檔（HTTPS） / Chat 串流（WebSocket） |
-| | | **統一連接**: `wss://relay.sentinel.com` |
-| | | **路由依據**: JWT 中的 tenant_id |
-| Relay Endpoint ↔ Tunnel Client | **TCP** | 流量轉發 |
+| Frontend → Relay Endpoint | **TCP** | 上傳音檔、Chat 串流（外網，帶 email 路由） |
+| Relay Endpoint ↔ Tunnel Client | **TCP** | 純流量轉發 |
+| Root User → Backend API | **Shell 直連** | 開發調試（Debug / Dev Access） |
 | Tunnel Client → Backend API | **Local TCP** | 本地轉發請求 |
-| Backend API → Device Registry | **HTTPS** | 設備註冊、輪詢綁定狀態 |
+| Backend API → Device Registry | **HTTPS** | 註冊使用者、查詢綁定狀態 |
 | Backend API → Chat Service | **WebSocket** | Chat 查詢串流回應 |
 | Backend API → Database | SQL | 讀寫資料、新增 Job |
 | ASR Service → Database | SQL (Poll + Write) | 輪詢 ASR Jobs、寫入逐字稿 |
@@ -87,9 +85,10 @@ sequenceDiagram
     participant ASR as ASR Service
     participant LLM as LLM Batch Service
 
-    FE->>Relay: HTTPS POST 音檔 + JWT
-    Relay->>Relay: 驗證 JWT，提取 tenant_id
-    Relay->>API: 轉發 (根據 tenant_id 路由)
+    FE->>Relay: TCP POST 音檔 (帶 email)
+    Relay->>Relay: 查 email → tenant_id，路由
+    Relay->>API: 轉發
+    API->>API: 驗證用戶認證
     API->>DB: INSERT ASR Job (status=pending)
 
     Note over ASR: 輪詢 jobs 表
@@ -105,7 +104,7 @@ sequenceDiagram
     LLM->>DB: UPDATE Job (status=completed)
 ```
 
-### 2. Chat 查詢流程 (WebSocket Streaming，經過 Relay)
+### 2. Chat 查詢流程 (TCP Streaming，經過 Relay)
 
 ```mermaid
 sequenceDiagram
@@ -117,22 +116,23 @@ sequenceDiagram
     participant DB as Database
     participant LLM as LLM Service
 
-    App->>Relay: WebSocket (wss://relay.sentinel.com) + JWT
-    Relay->>Relay: 驗證 JWT，提取 tenant_id
-    Relay->>Tunnel: 轉發 (根據 tenant_id 路由)
+    App->>Relay: TCP 連線 (帶 email)
+    Relay->>Relay: 查 email → tenant_id，路由
+    Relay->>Tunnel: 轉發
     Tunnel->>API: Local TCP
-    API->>Chat: WebSocket 串流
+    API->>API: 驗證用戶認證
+    API->>Chat: TCP 串流
 
     Chat->>DB: 向量搜尋
     Chat->>LLM: LLM Streaming Tokens
     LLM-->>Chat: Tokens
-    Chat-->>API: WebSocket 回傳
+    Chat-->>API: TCP 回傳
     API-->>Tunnel: 回傳路徑相同
     Tunnel-->>Relay: 轉發
-    Relay-->>App: WebSocket 推送
+    Relay-->>App: TCP 推送
 ```
 
-### 3. 監控流程（HTTPS 輪詢，經過 Relay）
+### 3. 監控流程（TCP 輪詢，經過 Relay）
 
 ```mermaid
 sequenceDiagram
@@ -140,25 +140,30 @@ sequenceDiagram
     participant Relay as Relay Endpoint
     participant API as Backend API
 
-    FE->>Relay: HTTPS GET 監控數據 + JWT
-    Relay->>Relay: 驗證 JWT，提取 tenant_id
-    Relay->>API: 轉發 (根據 tenant_id 路由)
+    FE->>Relay: TCP GET 監控數據 (帶 email)
+    Relay->>Relay: 查 email → tenant_id，路由
+    Relay->>API: 轉發
 
-    Note over API: 收集系統狀態<br/>CPU / Memory / Storage / Active Sessions
+    Note over API: 驗證用戶認證<br/>收集系統狀態<br/>CPU / Memory / Storage / Active Sessions
 
-    API-->>Relay: HTTPS 回應系統狀態
-    Relay-->>FE: HTTPS 回應
+    API-->>Relay: TCP 回應系統狀態
+    Relay-->>FE: TCP 回應
 ```
 
-### 4. 認證流程（直連 SaaS）
+### 4. 使用者註冊流程
 
 ```mermaid
 sequenceDiagram
-    participant FE as Frontend App
-    participant Auth as Auth API (SaaS)
+    participant Deployer as 系統部署者
+    participant API as Backend API
+    participant Registry as Device Registry (SaaS)
+    participant Relay as Relay Endpoint
 
-    FE->>Auth: HTTPS 登入請求
-    Auth-->>FE: JWT Token
+    Deployer->>API: 新增使用者 (alice@acme.com)
+    API->>Registry: 註冊使用者 (email, tenant_id)
+    API->>Relay: 通知 Relay (email, tenant_id)
+    Relay-->>API: 確認
+    API-->>Deployer: 使用者創建成功
 ```
 
 ---

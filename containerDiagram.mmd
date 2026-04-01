@@ -11,9 +11,8 @@ flowchart TD
 
     %% ===== Cloud Systems (Outside Sentinel Server) =====
     subgraph Cloud ["Cloud Infrastructure (SaaS)"]
-        RelayEndpoint["Relay Endpoint<br>(NAT Traversal)"]
-        AuthAPI["Auth API (SaaS)<br>(JWT Signing)"]
-        DeviceRegistry["Device Registry (SaaS)<br>(Serial → Tenant)"]
+        RelayEndpoint["Relay Endpoint<br>(純 TCP 轉發)"]
+        DeviceRegistry["Device Registry (SaaS)<br>(Email → Tenant)"]
     end
 
     %% ===== On-Premise System =====
@@ -36,12 +35,9 @@ flowchart TD
     %% ===== User to Frontend =====
     NormalUser --> FrontendApp
     AdminUser --> FrontendApp
-    RootUser --> FrontendApp
 
-    %% ===== Frontend → Cloud (Auth + Relay) =====
-    FrontendApp -->|"HTTPS / Login / Refresh JWT"| AuthAPI
-    FrontendApp -->|"HTTPS / Bind Device"| DeviceRegistry
-    FrontendApp -->|"HTTPS / Upload Audio<br>/ WebSocket / Chat Streaming"| RelayEndpoint
+    %% ===== Frontend → Cloud (Relay only) =====
+    FrontendApp -->|"TCP / Upload Audio<br>/ Chat Streaming<br/>(外網 + email 路由)"| RelayEndpoint
 
     %% ===== Cloud → On-Prem (Relay path) =====
     RelayEndpoint -->|"Relay Traffic"| TunnelClient
@@ -51,11 +47,11 @@ flowchart TD
     TunnelClient -.->|"Outbound Tunnel"| RelayEndpoint
 
     %% ===== Server → SaaS (Registration only) =====
-    BackendAPI -.->|"HTTPS / Auto-Register Serial"| DeviceRegistry
-    BackendAPI -.->|"HTTPS / Poll Binding Status"| DeviceRegistry
+    BackendAPI -.->|"HTTPS / 註冊使用者 (email → tenant_id)"| DeviceRegistry
+    BackendAPI -.->|"HTTPS / 查詢使用者綁定狀態"| DeviceRegistry
 
     %% ===== Root User Direct (for debugging) =====
-    RootUser -.->|"Direct LAN Access (HTTPS)"| BackendAPI
+    RootUser -.->|"Debug / Dev Access (shell直連)"| BackendAPI
 
 
     %% ===== Backend Internal (WebSocket for Chat only) =====

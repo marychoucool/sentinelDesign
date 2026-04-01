@@ -29,11 +29,15 @@ Server 端會執行兩個模型：
 
 # 使用者角色
 
+- **系統部署者 / IT 人員**（Deployer）
+  - 負責初次系統設定與網路配置
 - **公司員工**（Normal User）
   - **Basic Plan**: 使用 RAG Chat 查詢會議內容
   - **Mid Plan**: 使用 Agent with MCP Chat，支援更複雜的任務執行
 - **管理者**（Admin User）
-- **Root**（Super User for Dev and Debug）  
+  - 系統監控、使用者管理、首次初始化設定
+- **Root**（Super User for Dev and Debug）
+  - 全系統存取權限，用於開發與排錯  
 
 ---
 
@@ -46,11 +50,18 @@ Server 端會執行兩個模型：
 
 # User Story
 
+## Initial Setup & First-Time Configuration
+- 作為 **系統部署者**，我希望在首次啟動 Sentinel Server 時能夠設定網路連線（支援 Static IP 或 DHCP），以便 Server 能夠在客戶環境中正確運作。
+- 作為 **系統部署者**，我希望系統能提供設定網路的命令範例，以便快速完成網路配置。
+- 作為 **管理者**（Admin User），我希望在首次設定完成後，能透過直連 IP 訪問 Sentinel Server 的初始化頁面。
+- 作為 **管理者**，我希望透過初始化頁面能夠創建 Normal User 帳號，並查看系統基本資訊（包含音訊檔管理）。
+- 作為 **管理者**，我希望系統能夠在**完全離線**（無外網連線）的環境下進行使用者認證，確保資料安全與隱私。
+
 ## Session Recording
 - 作為使用者，我希望可以建立會議即時 Session，錄製會議內容（streaming upload）。
-- 作為使用者，我希望可以預約會議 Session，時間到的時候前端提醒使用者，並可以在calendar page查看。
+- 作為使用者，我希望可以預約會議 Session，時間到的時候前端提醒使用者，並可以在 calendar page 查看。
 - 作為使用者，我希望在離線時錄製 Session，連線後自動上傳至 server。
-- As a user, I want to be notified when a session is processed successfully, so that I can check report ASAP.
+- 作為使用者，我希望在 Session 處理完成後收到通知，以便盡快查看報告。
 
 ## Report
 - 作為使用者，我希望完成 session 後系統能自動產生會議摘要。
@@ -68,15 +79,15 @@ Server 端會執行兩個模型：
 ## Dashboard
 - 作為管理者，我希望可以監控伺服器資源（CPU、記憶體、儲存空間）。
 - 作為管理者，我希望可以查看目前活躍會議 Session 及任務數量。
-- 
-## calendar
-- 作為管理者，我希望可以在calendar page，當中看到我所預約的session。
+
+## Calendar
+- 作為使用者，我希望可以在 calendar page 當中看到我所預約的 session。
 
 ## Settings
 - 作為使用者，我希望可以更改個人資訊。
 
 ## Debug and Dev
-- As a root, I want to access everything in the system to debug and develop.
+- 作為 Root，我希望能夠存取系統中的所有內容以進行除錯與開發。
 
 ---
 
@@ -127,29 +138,44 @@ Server 端會執行兩個模型：
 ---
 
 ## 4. Chat Intelligence
-**Actor**: Normal User  
+**Actor**: Normal User
+
 **Precondition**: Normal user logged in 且至少有一個完成的 session
 
-### 主要流程
+### 主要流程（Basic Plan - RAG 模式）
 1. 使用者開啟 Chat 介面，輸入自然語言查詢。
 2. 系統透過 RAG 檢索 pgvector 並由 LLM 回答。
 3. 使用者查看 Session Report 或 Action Items（可篩選狀態）。
-4. 使用者修改 Action Item 內容以確保明確性。
+
+### 主要流程（Mid Plan - Agent with MCP 模式）
+1. 使用者開啟 Chat 介面，輸入複雜任務指令（如「幫我建立下週三的團隊會議」）。
+2. 系統透過 Agent Engine 進行任務規劃與工具調用。
+3. Agent 透過 MCP Server 呼叫系統工具（如建立 Session、修改 Action Item）。
+4. 系統回傳執行結果與狀態更新。
 
 ---
 
 ## 5. 系統監控與 Debug (Admin & Root)
-**Actor**: Admin User / Root  
+**Actor**: Admin User / Root
+
 **Precondition**: Admin User / Root logged in
 
-### 主要流程
+### 主要流程（Admin User）
 1. 查看伺服器硬體狀態（CPU/Memory/Storage）及系統活躍指標（Active Sessions）。
-2. **權限限制**：Admin 無法查看特定會議逐字稿或摘要內容。
+2. 查看使用者列表與系統統計資訊。
+3. 管理使用者帳號（創建、修改、停用）。
+
+### 主要流程（Root）
+1. 擁有 Admin User 的所有權限。
+2. 可查看特定會議逐字稿、摘要內容（用於除錯）。
+3. 可存取系統日誌與錯誤追蹤資訊。
+4. 可執行系統維護操作（如重新索引、清理快取）。
 
 ---
 
 ## 6. 查看與管理預約會議 (Calendar)
 **Actor**: Normal User / Admin User
+
 **Precondition**: User logged in
 
 ### 主要流程
@@ -159,7 +185,56 @@ Server 端會執行兩個模型：
 
 ---
 
+## 7. 初次系統設定與網路配置 (Initial Setup & Network Configuration)
+**Actor**: 系統部署者 / IT 人員
+
+**Precondition**: Sentinel Server 硬體已就緒，尚未進行網路設定
+
+### 主要流程
+1. 系統部署者將 Sentinel Server 連接至客戶網路。
+2. 系統部署者執行初次設定命令。
+3. 系統提供網路設定選項：
+   - **DHCP 模式**（推薦）：自動從 DHCP Server 取得 IP
+   - **Static IP 模式**：手動輸入 IP、Netmask、Gateway、DNS
+4. 系統套用網路設定並回報設定成功與分配的 IP 位址。
+5. 系統啟動 Web Server（預設連接埠 80/443）。
+
+### 替代流程
+- **Static IP 設定**：系統提供設定命令範例，部署者複製並修改參數後執行。
+- **設定失敗**：系統提供錯誤訊息與診斷建議（如檢查網路線、IP 衝突等）。
+
+---
+
+## 8. 首次管理者登入與使用者初始化 (First-Time Admin Login & User Initialization)
+**Actor**: Admin User (首次登入)
+
+**Precondition**: 網路設定完成，Admin 透過 IP 直連 Sentinel Server
+
+### 主要流程
+1. Admin 開啟瀏覽器，輸入 Sentinel Server 的 IP 位址（如 `http://192.168.1.100`）。
+2. 系統呈現**初始化設定頁面**（首次訪問限定）。
+3. 系統顯示基本資訊：
+   - 系統版本與狀態
+   - 硬體資源概況（CPU、Memory、Storage）
+   - 音訊檔儲存位置與容量
+   - 目前網路設定資訊（IP、Gateway、DNS）
+4. Admin 輸入預設管理者憑證或設定新的管理者密碼。
+5. 系統驗證成功後，進入**使用者管理頁面**。
+6. Admin 創建第一個 Normal User 帳號（輸入使用者名稱、Email、初始密碼）(登入使用Email、初始密碼)。
+7. 系統將使用者資訊儲存至本地資料庫（**無需外網連線**）。
+8. Admin 可繼續創建更多 Normal User 或完成初始化。
+
+### 安全考量
+- **離線認證機制**：所有認證資訊（密碼 hash、session token）均儲存在本地資料庫，不依賴外部 OAuth 或雲端服務。
+- **預設連接埠**：初始化頁面僅在首次訪問時顯示，之後需登入才能存取。
+- **HTTPS 支援**：系統支援自簽憑證或上傳客戶提供憑證，確保加密傳輸。
+
+---
+
 # Infra
-- Linux
-- Docker
-- pgvector
+- **OS**: Linux
+- **Container**: Docker
+- **Database**: PostgreSQL + pgvector
+- **Web Server**: Nginx
+- **Backend**: Rust
+- **Workflow**: Temporal.io
