@@ -53,8 +53,11 @@ Server 端會執行兩個模型：
 ## Initial Setup & First-Time Configuration
 - 作為 **系統部署者**，我希望在首次啟動 Sentinel Server 時能夠設定網路連線（支援 Static IP 或 DHCP），以便 Server 能夠在客戶環境中正確運作。
 - 作為 **系統部署者**，我希望系統能提供設定網路的命令範例，以便快速完成網路配置。
+- 作為 **系統部署者**，我希望在首次啟動時輸入 License Key 以啟用 Sentinel 服務，確保授權合法。
 - 作為 **管理者**（Admin User），我希望在首次設定完成後，能透過直連 IP 訪問 Sentinel Server 的初始化頁面。
 - 作為 **管理者**，我希望透過初始化頁面能夠創建 Normal User 帳號，並查看系統基本資訊（包含音訊檔管理）。
+- 作為 **管理者**，我希望查看 License 狀態與到期時間，以便提前續約。
+- 作為 **管理者**，我希望系統能在 License 即將到期時發出通知。
 - 作為 **管理者**，我希望系統能夠在**完全離線**（無外網連線）的環境下進行使用者認證，確保資料安全與隱私。
 
 ## Session Recording
@@ -231,10 +234,34 @@ Server 端會執行兩個模型：
 
 ---
 
+## 9. Sentinel License Activation
+**Actor**: 系統部署者 / IT 人員
+
+**Precondition**: Sentinel Server 網路設定完成，具備外網連線（用於 License 驗證）
+
+### 主要流程
+1. 系統部署者完成網路設定後，系統提示進行 License Activation。
+2. 系統部署者輸入 License Key。
+3. Sentinel Server 連線至 SaaS 服務進行 License 驗證。
+4. SaaS 驗證 License Key 有效後，回傳授權資訊（到期日、功能等級）。
+5. 系統儲存授權資訊並啟用 Sentinel 服務。
+6. 系統顯示啟用成功與 License 到期日。
+
+### 替代流程
+- **License 無效**：系統顯示錯誤訊息（無效、過期、已使用），允許重新輸入。
+- **無外網連線**：系統提供離線啟用流程（生成 request file，上傳至 SaaS portal 取得 response file，匯入後啟用）。
+- **License 即將到期**：系統提前 30 天通知管理員，可透過 SaaS 續約並更新 License Key。
+
+### 備註
+- **License 與 Relay Tunnel 註冊分離**：License Activation 是產品授權驗證；Relay Tunnel 註冊是建立反向隧道連線，兩者為獨立功能。
+- **授權資訊儲存**：License 資訊（Key、到期日、等級）儲存於本地資料庫，定期與 SaaS 同步狀態。
+
+---
+
 # Infra
 - **OS**: Linux
 - **Container**: Docker
 - **Database**: PostgreSQL + pgvector
-- **Web Server**: Nginx
-- **Backend**: Rust
-- **Workflow**: Temporal.io
+- **Relay Endpoint**: Rust (自建)
+- **Backend API**: NestJS
+- **Job Processing**: Database Jobs Table Polling (ASR/LLM Services)
