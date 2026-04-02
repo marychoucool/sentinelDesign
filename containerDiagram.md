@@ -63,7 +63,8 @@
 | Relay Endpoint ↔ Tunnel Client | **TCP** | 純流量轉發 |
 | Root User → Backend API | **Shell 直連** | 開發調試（Debug / Dev Access） |
 | Tunnel Client → Backend API | **Local TCP** | 本地轉發請求 |
-| Backend API → Device Registry | **HTTPS** | 註冊使用者、查詢綁定狀態 |
+| Backend API → Device Registry | **HTTPS** | 註冊使用者 |
+| Relay Endpoint → Device Registry | **HTTPS** | 查詢 tenant_id（按需路由） |
 | OTA Agent ↔ OTA Server | **HTTPS** | 查詢更新、下載套件、回報狀態 |
 | Backend API → Chat Service | **WebSocket** | Chat 查詢串流回應 |
 | OTA Agent → Backend API | **HTTP** | 健康檢查、更新狀態查詢 |
@@ -156,20 +157,43 @@ sequenceDiagram
     Relay-->>FE: TCP 回應
 ```
 
-### 4. 使用者註冊流程
+### 4. 使用者註冊與路由流程
+
+#### 初始化階段（系統部署者新增使用者）
 
 ```mermaid
 sequenceDiagram
     participant Deployer as 系統部署者
     participant API as Backend API
     participant Registry as Device Registry (SaaS)
-    participant Relay as Relay Endpoint
 
     Deployer->>API: 新增使用者 (alice@acme.com)
     API->>Registry: 註冊使用者 (email, tenant_id)
-    API->>Relay: 通知 Relay (email, tenant_id)
-    Relay-->>API: 確認
+    Registry-->>API: 確認
     API-->>Deployer: 使用者創建成功
+```
+
+#### 運行階段（Relay 按需查詢路由）
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend App
+    participant Relay as Relay Endpoint
+    participant Registry as Device Registry (SaaS)
+    participant Tunnel as Tunnel Client
+    participant API as Backend API
+
+    FE->>Relay: TCP 連線 (帶 email)
+    Relay->>Relay: 檢查本地路由快取
+
+    alt 未找到 email
+        Relay->>Registry: 查詢 tenant_id
+        Registry-->>Relay: 返回 tenant_id
+        Relay->>Relay: 更新本地快取
+    end
+
+    Relay->>Tunnel: 轉發請求
+    Tunnel->>API: 本地轉發
 ```
 
 ---

@@ -9,11 +9,11 @@ flowchart TD
         FrontendApp["Frontend App<br>(Desktop/iOS/Android)"]
     end
 
-    %% ===== Cloud Systems (Outside Sentinel Server) =====
-    subgraph Cloud ["Cloud Infrastructure (SaaS)"]
+    %% ===== Sentinel 雲端組件 (自建) =====
+    subgraph Cloud ["Sentinel 雲端組件 (自建)"]
         RelayEndpoint["Relay Endpoint<br>(純 TCP 轉發)"]
-        DeviceRegistry["Device Registry (SaaS)<br>(Email → Tenant)"]
-        OTAServer["OTA Server (SaaS)<br>(版本管理 / 推出控制)"]
+        DeviceRegistry["Device Registry<br>(Email → Tenant)"]
+        OTAServer["OTA Server<br>(版本管理 / 推送控制)"]
     end
 
     %% ===== On-Premise System =====
@@ -52,7 +52,9 @@ flowchart TD
 
     %% ===== Server → SaaS (Registration only) =====
     BackendAPI -.->|"HTTPS / 註冊使用者 (email → tenant_id)"| DeviceRegistry
-    BackendAPI -.->|"HTTPS / 查詢使用者綁定狀態"| DeviceRegistry
+
+    %% ===== Relay → Device Registry (Routing lookup) =====
+    RelayEndpoint -.->|"HTTPS / 查詢 tenant_id (on demand)"| DeviceRegistry
 
     %% ===== OTA Agent → OTA Server =====
     OTAAgent -.->|"HTTPS / 查詢更新 / 下載套件 / 回報狀態"| OTAServer
@@ -66,10 +68,11 @@ flowchart TD
 
     %% ===== OTA Agent Internal =====
     OTAAgent -->|"健康檢查 / 更新狀態查詢"| BackendAPI
-    OTAAgent -->|"健康檢查"| ASRService
-    OTAAgent -->|"健康檢查"| LLMService
-    OTAAgent -->|"健康檢查"| ChatService
-    OTAAgent -->|"儲存更新狀態 / 版本資訊"| Database
+    OTAAgent -.->|"儲存更新狀態 / 版本資訊"| Database
+
+    %% ===== OTA 註解 =====
+    Note_OTA["📝 OTA 更新時會對所有容器服務<br/>(ASR/LLM/Chat) 進行健康檢查"]
+    OTAAgent -.-> Note_OTA
 
     %% ===== Async Job Processing =====
     BackendAPI -->|"INSERT Job (pending)"| Database

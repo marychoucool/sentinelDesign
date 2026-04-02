@@ -1,33 +1,34 @@
 flowchart LR
-    %% ===== Users =====
-    NormalUser["Normal User<br>(Mobile / Laptop)"]
-    AdminUser["Admin User<br>(Dashboard)"]
-    RootUser["Root User<br>(Debug / Dev)"]
+    %% ===== 使用者 =====
+    NormalUser["一般使用者<br>(Mobile / Laptop)"]
+    AdminUser["管理員<br>(Dashboard)"]
+    RootUser["Root 使用者<br>(Debug / Dev)"]
 
-    %% ===== External Cloud Systems =====
-    subgraph Cloud ["Cloud Infrastructure (SaaS/IDC)"]
-        RelayService["Relay Service<br>(純 TCP 轉發)"]
-        DeviceRegistry["Device Registry<br>(Email → Tenant)"]
-        OTAServer["OTA Server<br>(版本管理 / 推出控制)"]
+    %% ===== Sentinel 系統 (自建) =====
+    subgraph SentinelSystem ["Sentinel 系統"]
+        direction TB
+
+        subgraph Cloud ["雲端組件 (自建 SaaS)"]
+            RelayService["Relay Service<br>(TCP 轉發 / 外網存取)"]
+            DeviceRegistry["Device Registry<br>(Email → Tenant)"]
+            OTAServer["OTA Server<br>(版本管理)"]
+        end
+
+        SentinelServer["Sentinel Server<br>(本地部署 / 核心服務)"]
     end
 
-    %% ===== On-Premise System =====
-    SentinelServer["Sentinel Server<br>(On-Premise + Auth)"]
+    %% ===== 使用者 → 雲端 (外網) =====
+    NormalUser -->|"音訊 / 聊天 (外網)"| RelayService
+    AdminUser -->|"監控 / 設定 (外網)"| RelayService
 
-    %% ===== User → Relay → Server (Data flows) =====
-    NormalUser -->|"Audio / Chat (外網)"| RelayService
-    RelayService -->|"Relay Traffic"| SentinelServer
-    AdminUser -->|"Monitor / Setup (外網)"| RelayService
+    %% ===== 使用者 → 本地 (區網) =====
+    NormalUser -.->|"音訊 / 聊天 (區網)"| SentinelServer
+    AdminUser -.->|"監控 / 設定 (區網)"| SentinelServer
 
-    %% ===== Direct LAN Access =====
-    NormalUser -.->|"Audio / Chat (區網)"| SentinelServer
-    AdminUser -.->|"Monitor / Setup (區網)"| SentinelServer
-
-    %% ===== Sentinel → Device Registry =====
+    %% ===== 內部交互 =====
+    RelayService -->|"轉發流量"| SentinelServer
     SentinelServer -.->|"註冊使用者"| DeviceRegistry
+    SentinelServer -.->|"查詢更新 / 回報狀態"| OTAServer
 
-    %% ===== Sentinel → OTA Server =====
-    SentinelServer -.->|"查詢更新 / 下載套件 / 回報狀態"| OTAServer
-
-    %% ===== Root User Direct =====
-    RootUser -->|"Debug / 全權限存取"| SentinelServer
+    %% ===== Root 直接存取本地 =====
+    RootUser -->|"Debug / 全權限"| SentinelServer

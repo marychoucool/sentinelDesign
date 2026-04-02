@@ -1,0 +1,76 @@
+%%{init: {'themeVariables': { 'rectBorderBkgColor': 'rgb(40, 50, 70)', 'rectBkgColor': 'rgb(40, 50, 70)', 'rectTextColor': '#ffffff', 'lineColor': '#a0a0a0', 'sectionBkgColor': 'rgb(40, 50, 70)', 'altSectionBkgColor': 'rgb(40, 50, 70)' }}}%%
+sequenceDiagram
+    autonumber
+    participant OTA as OTA Agent
+    participant OTA_Server as OTA Server (SaaS)
+    participant API as Backend API
+    participant ASR as ASR Service
+    participant LLM as LLM Batch Service
+    participant Chat as Chat Service
+    participant DB as Database
+
+    %% ===== 階段 1: 檢查更新 =====
+    rect rgb(40, 50, 70)
+        Note over OTA,OTA_Server: 階段 1: 檢查更新
+        OTA->>OTA_Server: 定期輪詢 (每小時)<br/>GET /ota/check-update<br/>{current_version, device_id}
+        OTA_Server-->>OTA: 無更新 / 有新版本<br/>{version, changelog, package_url}
+    end
+
+    %% ===== 階段 2: 更新前準備 =====
+    rect rgb(40, 50, 70)
+        Note over OTA,DB: 階段 2: 更新前準備
+        OTA->>DB: 儲存更新狀態<br/>status = "preparing"
+        OTA->>OTA_Server: 下載更新包<br/>驗證簽名 + 哈希
+        OTA->>DB: 更新狀態<br/>status = "downloaded"
+    end
+
+    %% ===== 階段 3: 更新前健康檢查 =====
+    rect rgb(40, 50, 70)
+        Note over OTA,Chat: 階段 3: 更新前健康檢查
+        OTA->>API: GET /health
+        API-->>OTA: 200 OK
+        OTA->>ASR: GET /health
+        ASR-->>OTA: 200 OK
+        OTA->>LLM: GET /health
+        LLM-->>OTA: 200 OK
+        OTA->>Chat: GET /health
+        Chat-->>OTA: 200 OK
+        OTA->>DB: 更新狀態<br/>status = "health_check_passed"
+    end
+
+    %% ===== 階段 4: 執行更新 =====
+    rect rgb(40, 50, 70)
+        Note over OTA,DB: 階段 4: 執行更新
+        OTA->>DB: 更新狀態<br/>status = "updating"
+        OTA->>OTA: OS 層更新 (A/B 分區)<br/>或 Docker 容器更新
+        OTA->>OTA: 重啟服務
+    end
+
+    %% ===== 階段 5: 更新後驗證 =====
+    rect rgb(40, 50, 70)
+        Note over OTA,Chat: 階段 5: 更新後驗證
+        OTA->>API: GET /health
+        API-->>OTA: 200 OK
+        OTA->>ASR: GET /health
+        ASR-->>OTA: 200 OK
+        OTA->>LLM: GET /health
+        LLM-->>OTA: 200 OK
+        OTA->>Chat: GET /health
+        Chat-->>OTA: 200 OK
+
+        alt 健康檢查成功
+            OTA->>DB: 更新狀態<br/>status = "success"
+            OTA->>OTA_Server: 回報更新成功<br/>POST /ota/report
+        else 健康檢查失敗
+            OTA->>OTA: 執行回滾
+            OTA->>DB: 更新狀態<br/>status = "rolled_back"
+            OTA->>OTA_Server: 回報更新失敗<br/>POST /ota/report
+        end
+    end
+
+    %% ===== OTA Server 端控制 =====
+    rect rgb(40, 50, 70)
+        Note over OTA_Server: OTA Server 端控制
+        OTA_Server->>OTA_Server: 灰度策略配置<br/>(百分比 / 白名單)
+        OTA_Server->>OTA_Server: 監控更新成功率<br/>動態調整推送速率
+    end
