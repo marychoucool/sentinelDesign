@@ -49,6 +49,11 @@
 - **功能**: Email → Tenant 映射、使用者註冊
 - **用途**: Sentinel 註冊使用者時，記錄 email 與 tenant_id 的對應關係
 
+#### OTA Server
+- **部署位置**: Cloud (SaaS)
+- **功能**: 版本管理、推出控制、簽章服務
+- **用途**: 提供 OS 與容器層的更新套件，管理漸進式推出 (Canary → Beta → Full)
+
 ### On-Premise 系統
 
 #### Sentinel Server
@@ -67,6 +72,7 @@
 5. **Device Registry**: Sentinel 註冊使用者時同步到 SaaS，記錄 email → tenant_id 映射
 6. **使用者權限分層**: 三種使用者角色有明確的權限區分
 7. **互動簡潔**: Context 層級只展示「誰與系統互動」，不涉及內部實作細節
+8. **OTA 更新機制**: Sentinel Server 與 OTA Server 通訊，支援自動/手動/離線三種更新模式
 
 ---
 

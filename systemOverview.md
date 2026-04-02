@@ -92,6 +92,13 @@ Server 端會執行兩個模型：
 ## Debug and Dev
 - 作為 Root，我希望能夠存取系統中的所有內容以進行除錯與開發。
 
+## OTA (Over-The-Air) Update
+- 作為**管理者**，我希望查看目前系統版本與可用更新。
+- 作為**管理者**，我希望設定自動更新策略（維護時段、更新模式）。
+- 作為**管理者**，我希望手動觸發系統更新。
+- 作為**管理者**，我希望在更新失敗時收到通知並能回滾。
+- 作為**系統部署者**，我希望在氣隔環境（無外網）中透過 USB 進行離線更新。
+
 ---
 
 # Use Case
@@ -258,10 +265,64 @@ Server 端會執行兩個模型：
 
 ---
 
+## 10. OTA 系統更新 (Over-The-Air Update)
+**Actor**: 管理者 / 系統部署者
+
+**Precondition**: Sentinel Server 已啟用並正常運作
+
+### 主要流程（自動更新）
+1. OTA Agent 定期向 SaaS OTA Server 查詢更新（設備 ID、目前版本）。
+2. OTA Server 檢查設備群組與推出策略，回傳可用更新資訊。
+3. OTA Agent 下載更新套件並驗證數位簽章。
+4. OTA Agent 通知管理者有可用更新。
+5. 在設定的維護時段內，OTA Agent 自動執行更新：
+   - **OS 層**：寫入備用分區 B，更新 bootloader 配置
+   - **容器層**：載入新映像，重啟服務
+6. 系統重啟後進行健康檢查。
+7. 健康檢查通過後，OTA Agent 回報更新成功至 SaaS。
+
+### 主要流程（手動更新）
+1. 管理者在 Dashboard 查看「目前版本」與「可用更新」。
+2. 管理者點擊「檢查更新」或「立即更新」。
+3. OTA Agent 向 OTA Server 查詢並下載更新。
+4. 管理者確認更新（查看版本資訊、變更內容、預估停機時間）。
+5. OTA Agent 執行更新並顯示進度。
+6. 更新完成後通知管理者結果。
+
+### 主要流程（離線更新 - USB）
+1. 系統部署者在 SaaS Portal 下載離線更新套件。
+2. 系統部署者將套件複製至 USB 並插入 Sentinel Server。
+3. OTA Agent 偵測 USB 並讀取套件。
+4. OTA Agent 驗證簽章與 checksums。
+5. 系統部署者確認執行更新。
+6. OTA Agent 執行更新並顯示進度。
+7. 更新完成後，系統連線時回報結果至 SaaS。
+
+### 替代流程（更新失敗與回滾）
+- **健康檢查失敗**：OTA Agent 連續 N 次健康檢查失敗後自動觸發回滾。
+- **OS 層回滾**：Bootloader 切換回原分區 A，系統重啟。
+- **容器層回滾**：恢復備份映像，重啟服務。
+- **資料庫回滾**：從 snapshot 還原。
+- **回滾成功**：通知管理者並記錄日誌，上報失敗至 SaaS。
+
+### 安全考量
+- **數位簽章驗證**：所有更新套件必須通過 Ed25519 簽章驗證。
+- **傳輸加密**：使用 HTTPS + Certificate Pinning。
+- **資料備份**：更新前自動備份映像與資料庫。
+- **最小權限**：OTA Agent 以最小權限執行。
+
+### 備註
+- **分層更新**：OS 層與容器層獨立更新，降低風險。
+- **漸進式推出**：採用 Canary (5%) → Beta (25%) → Full (100%) 策略。
+- **停機時間**：容器層更新約 30-60 秒，OS 層更新需系統重啟。
+
+---
+
 # Infra
-- **OS**: Linux
+- **OS**: Linux (支援 A/B 分區更新)
 - **Container**: Docker
 - **Database**: PostgreSQL + pgvector
 - **Relay Endpoint**: Rust (自建)
-- **Backend API**: NestJS
 - **Job Processing**: Database Jobs Table Polling (ASR/LLM Services)
+- **OTA Agent**: Rust/Go (系統更新管理)
+- **OTA Server**: SaaS 端 (版本管理、推出控制、簽章服務)

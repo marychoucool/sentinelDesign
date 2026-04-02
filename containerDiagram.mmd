@@ -13,6 +13,7 @@ flowchart TD
     subgraph Cloud ["Cloud Infrastructure (SaaS)"]
         RelayEndpoint["Relay Endpoint<br>(純 TCP 轉發)"]
         DeviceRegistry["Device Registry (SaaS)<br>(Email → Tenant)"]
+        OTAServer["OTA Server (SaaS)<br>(版本管理 / 推出控制)"]
     end
 
     %% ===== On-Premise System =====
@@ -27,6 +28,9 @@ flowchart TD
         ASRService["ASR Service<br>: Batch Speech to Text"]
         LLMService["LLM Batch Service<br>: Summary / Action / Embedding"]
         ChatService["Chat Service<br>: Chat Query Processing (WebSocket)"]
+
+        %% ===== OTA Agent =====
+        OTAAgent["OTA Agent<br>: 系統更新管理"]
 
         %% ===== Data Stores =====
         Database["Database<br>(PostgreSQL + pgvector)<br>(含 jobs 表)"]
@@ -50,12 +54,22 @@ flowchart TD
     BackendAPI -.->|"HTTPS / 註冊使用者 (email → tenant_id)"| DeviceRegistry
     BackendAPI -.->|"HTTPS / 查詢使用者綁定狀態"| DeviceRegistry
 
+    %% ===== OTA Agent → OTA Server =====
+    OTAAgent -.->|"HTTPS / 查詢更新 / 下載套件 / 回報狀態"| OTAServer
+
     %% ===== Root User Direct (for debugging) =====
     RootUser -.->|"Debug / Dev Access (shell直連)"| BackendAPI
 
 
     %% ===== Backend Internal (WebSocket for Chat only) =====
     BackendAPI -->|"WebSocket Streaming<br>(Chat 查詢)"| ChatService
+
+    %% ===== OTA Agent Internal =====
+    OTAAgent -->|"健康檢查 / 更新狀態查詢"| BackendAPI
+    OTAAgent -->|"健康檢查"| ASRService
+    OTAAgent -->|"健康檢查"| LLMService
+    OTAAgent -->|"健康檢查"| ChatService
+    OTAAgent -->|"儲存更新狀態 / 版本資訊"| Database
 
     %% ===== Async Job Processing =====
     BackendAPI -->|"INSERT Job (pending)"| Database

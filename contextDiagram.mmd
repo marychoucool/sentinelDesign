@@ -8,6 +8,7 @@ flowchart LR
     subgraph Cloud ["Cloud Infrastructure (SaaS/IDC)"]
         RelayService["Relay Service<br>(純 TCP 轉發)"]
         DeviceRegistry["Device Registry<br>(Email → Tenant)"]
+        OTAServer["OTA Server<br>(版本管理 / 推出控制)"]
     end
 
     %% ===== On-Premise System =====
@@ -24,6 +25,9 @@ flowchart LR
 
     %% ===== Sentinel → Device Registry =====
     SentinelServer -.->|"註冊使用者"| DeviceRegistry
+
+    %% ===== Sentinel → OTA Server =====
+    SentinelServer -.->|"查詢更新 / 下載套件 / 回報狀態"| OTAServer
 
     %% ===== Root User Direct =====
     RootUser -->|"Debug / 全權限存取"| SentinelServer

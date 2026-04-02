@@ -30,6 +30,7 @@
 |------|------|------|
 | **Relay Endpoint** | 自建 Relay Server (Rust) | 純 TCP 轉發（不做認證） |
 | **Device Registry** | Database + API | Email → Tenant 映射、使用者註冊 |
+| **OTA Server** | 版本管理服務 | 版本管理、推出控制、簽章服務、狀態追蹤 |
 
 ### 後端容器 (Sentinel Server - On-Premise)
 
@@ -40,6 +41,7 @@
 | **ASR Service** | HTTP API | 語音轉文字（批次處理） |
 | **LLM Batch Service** | - | 批次處理：摘要、Action Items、嵌入 |
 | **Chat Service** | WebSocket Streaming | Chat 查詢處理 (RAG / Agent)，串流回應 |
+| **OTA Agent** | **Rust**/Go | 系統更新管理：查詢更新、下載套件、驗證簽章、執行更新、健康檢查、回滾 |
 
 ### 資料儲存 (Data Stores)
 
@@ -62,11 +64,15 @@
 | Root User → Backend API | **Shell 直連** | 開發調試（Debug / Dev Access） |
 | Tunnel Client → Backend API | **Local TCP** | 本地轉發請求 |
 | Backend API → Device Registry | **HTTPS** | 註冊使用者、查詢綁定狀態 |
+| OTA Agent ↔ OTA Server | **HTTPS** | 查詢更新、下載套件、回報狀態 |
 | Backend API → Chat Service | **WebSocket** | Chat 查詢串流回應 |
+| OTA Agent → Backend API | **HTTP** | 健康檢查、更新狀態查詢 |
+| OTA Agent → ASR/LLM/Chat Services | **HTTP** | 健康檢查 |
 | Backend API → Database | SQL | 讀寫資料、新增 Job |
 | ASR Service → Database | SQL (Poll + Write) | 輪詢 ASR Jobs、寫入逐字稿 |
 | LLM Batch Service → Database | SQL (Poll + Write) | 輪詢 LLM Jobs、寫入處理結果 |
 | Chat Service → Database | SQL | 查詢/寫入 |
+| OTA Agent → Database | SQL | 儲存更新狀態、版本資訊 |
 
 ---
 
@@ -198,6 +204,8 @@ Level 4: Deployment Diagram
 | **WebSocket 僅用於 Chat** | Chat 需要串流 LLM 回應，其他功能用 HTTP 即可 |
 | **資料庫即 Job Queue** | 用 jobs 表存任務，各 Service 自己輪詢處理，無需額外依賴 |
 | **PostgreSQL + pgvector** | 支援關聯式資料與語意搜尋 |
+| **分層 OTA 更新** | OS 層使用 A/B 分區避免磚化，容器層獨立更新降低風險 |
+| **OTA Agent 獨立於 Backend API** | 更新過程中 Backend API 可能重啟，Agent 需獨立運作以處理回滾 |
 | **自建 Relay vs ngrok** | 詳見 [Relay Server 設計](./relayServerDesign.md#0-技術選型-ngrok-vs-自建) |
 
 ---
